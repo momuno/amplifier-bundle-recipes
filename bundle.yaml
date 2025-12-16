@@ -1,5 +1,5 @@
 bundle:
-  name: behavior-recipes
+  name: recipes
   version: 1.0.0
   description: Multi-step AI agent orchestration via declarative YAML recipes
 
