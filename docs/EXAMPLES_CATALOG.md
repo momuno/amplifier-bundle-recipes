@@ -83,7 +83,7 @@ steps:
     output: "security_results"
 
   - id: "synthesize-comprehensive"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: |
       Create comprehensive review combining:
@@ -624,20 +624,20 @@ name: "custom-workflow"
 steps:
   # From code-review: analysis
   - id: "analyze"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: "Analyze {{file_path}}"
     output: "analysis"
 
   # From security-audit: security check
   - id: "security-check"
-    agent: "security-guardian"
+    agent: "foundation:security-guardian"
     prompt: "Security audit: {{file_path}}"
     output: "security_findings"
 
   # From code-review: synthesize
   - id: "synthesize"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: "Synthesize: {{analysis}} and {{security_findings}}"
 ```

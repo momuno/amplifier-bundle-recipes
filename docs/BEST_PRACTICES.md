@@ -271,29 +271,79 @@ prompt: "Look at {{file_path}}"
 
 ### Agent Selection
 
-**Choose agents based on cognitive role:**
+**Choose agents based on cognitive role, using namespaced references:**
 
 ```yaml
 # Analytical tasks → zen-architect (ANALYZE mode)
 - id: "analyze-structure"
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   mode: "ANALYZE"
 
 # Design tasks → zen-architect (ARCHITECT mode)
 - id: "design-solution"
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   mode: "ARCHITECT"
 
 # Debugging → bug-hunter
 - id: "investigate-crash"
-  agent: "bug-hunter"
+  agent: "foundation:bug-hunter"
 
 # Security → security-guardian
 - id: "security-scan"
-  agent: "security-guardian"
+  agent: "foundation:security-guardian"
 ```
 
-**Why:** Specialized agents produce better results for their domain.
+**Agent naming convention:** Always use `bundle:agent-name` format:
+- `foundation:zen-architect` - from the foundation bundle
+- `foundation:bug-hunter` - from the foundation bundle
+- `foundation:test-coverage` - from the foundation bundle
+
+**Why:** Namespaced references make bundle dependencies explicit and prevent ambiguity.
+
+### Agent Dependencies
+
+**Agent references create bundle dependencies.** When a recipe uses an agent like `foundation:zen-architect`, that agent's bundle must be loaded for the recipe to execute.
+
+**Understanding the dependency chain:**
+
+```yaml
+# This recipe step:
+- id: "analyze"
+  agent: "foundation:zen-architect"
+  prompt: "Analyze the code"
+
+# Requires:
+# 1. The foundation bundle (or a bundle that includes it) to be loaded
+# 2. The zen-architect agent to be available through the coordinator
+```
+
+**Document requirements in recipe comments:**
+
+```yaml
+name: "code-analysis"
+description: "Analyze code structure and quality"
+version: "1.0.0"
+
+# Requirements:
+#   - foundation bundle (provides zen-architect, bug-hunter agents)
+#   - OR a bundle that includes foundation
+#
+# The recipes bundle includes foundation, so these agents are available
+# by default when using the recipes bundle.
+
+steps:
+  - id: "analyze"
+    agent: "foundation:zen-architect"
+    # ...
+```
+
+**Bundle dependency implications:**
+- The recipes bundle includes the foundation bundle
+- Therefore `foundation:*` agents are available by default
+- If you need agents from other bundles, document the requirement
+- Recipe validation should check agent availability before execution
+
+**Why:** Explicit dependencies prevent runtime failures and make recipes more portable.
 
 ### Step Granularity
 
@@ -800,7 +850,8 @@ Before sharing or using a recipe in production, verify:
 - [ ] All required fields present and valid
 - [ ] Descriptive names (recipe, steps, variables)
 - [ ] Clear, specific prompts
-- [ ] Appropriate agent selection
+- [ ] Appropriate agent selection with namespaced references (e.g., `foundation:zen-architect`)
+- [ ] Agent dependencies documented (which bundles provide required agents)
 
 ### Context
 - [ ] All required variables defined

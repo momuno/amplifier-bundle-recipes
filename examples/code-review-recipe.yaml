@@ -28,7 +28,7 @@ context:
 
 steps:
   - id: "analyze-structure"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Analyze the code structure in {{file_path}}:
@@ -43,7 +43,7 @@ steps:
     timeout: 600
 
   - id: "identify-issues"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Based on this analysis: {{structure_analysis}}
@@ -69,7 +69,7 @@ steps:
     timeout: 600
 
   - id: "assess-severity"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Based on the identified issues: {{identified_issues}}
@@ -89,7 +89,7 @@ steps:
     timeout: 120
 
   - id: "suggest-improvements"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     condition: "{{severity}} != 'none'"
     prompt: |
@@ -115,7 +115,7 @@ steps:
     timeout: 600
 
   - id: "validate-suggestions"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "REVIEW"
     condition: "{{severity}} == 'critical' or {{severity}} == 'high'"
     prompt: |
@@ -145,7 +145,7 @@ steps:
     timeout: 300
 
   - id: "quick-approval"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "REVIEW"
     condition: "{{severity}} == 'none'"
     prompt: |

@@ -20,7 +20,7 @@ steps:
   # Step 1: Analyze from all perspectives in parallel
   # Each perspective runs concurrently, reducing total time
   - id: "multi-perspective-analysis"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Analyze {{file_path}} from a {{perspective}} perspective.
@@ -46,7 +46,7 @@ steps:
 
   # Step 2: Synthesize all parallel analysis results
   - id: "synthesize-perspectives"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: |
       Synthesize the multi-perspective analysis results:

@@ -54,12 +54,12 @@ context:                        # Initial variables
 
 steps:                          # The workflow
   - id: "analyze"               # Step 1: Analyze
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: "Analyze {{input_file}}"
     output: "analysis"
 
   - id: "improve"               # Step 2: Improve
-    agent: "improver"
+    agent: "foundation:improver"
     prompt: "Improve based on: {{analysis}}"
     output: "improvements"
 ```
@@ -138,7 +138,7 @@ If 3+ answers are "yes", use a recipe.
 
 ```yaml
 - id: "analyze"              # Unique identifier
-  agent: "zen-architect"     # Which agent to spawn
+  agent: "foundation:zen-architect"     # Which agent to spawn
   mode: "ANALYZE"            # Agent mode (if supported)
   prompt: "Analyze {{file}}" # What to ask the agent
   output: "analysis"         # Where to store result
@@ -201,7 +201,7 @@ steps:
 
 ```yaml
 - id: "creative-step"
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   agent_config:
     providers:
       - module: "provider-anthropic"
@@ -252,17 +252,17 @@ amplifier run "resume recipe session recipe_20251118_143022_a3f2"
 name: "sequential-analysis"
 steps:
   - id: "extract"
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: "Extract key concepts from {{document}}"
     output: "concepts"
 
   - id: "categorize"
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: "Categorize these concepts: {{concepts}}"
     output: "categories"
 
   - id: "synthesize"
-    agent: "synthesizer"
+    agent: "foundation:synthesizer"
     prompt: "Synthesize: {{concepts}} into {{categories}}"
     output: "synthesis"
 ```
@@ -280,22 +280,22 @@ steps:
 name: "multi-perspective-review"
 steps:
   - id: "security-review"
-    agent: "security-guardian"
+    agent: "foundation:security-guardian"
     prompt: "Security audit: {{code}}"
     output: "security_findings"
 
   - id: "performance-review"
-    agent: "performance-optimizer"
+    agent: "foundation:performance-optimizer"
     prompt: "Performance audit: {{code}}"
     output: "performance_findings"
 
   - id: "maintainability-review"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     prompt: "Maintainability audit: {{code}}"
     output: "maintainability_findings"
 
   - id: "synthesize-findings"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     prompt: |
       Synthesize findings:
       Security: {{security_findings}}
@@ -329,12 +329,12 @@ steps:
   - id: "analyze-each"
     foreach: "{{files}}"
     as: "current_file"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     prompt: "Analyze {{current_file}} for {{focus}} issues"
     collect: "file_analyses"
 
   - id: "synthesize"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     prompt: |
       Create summary report from analyses:
       {{file_analyses}}
@@ -377,25 +377,25 @@ description: "Route processing based on classification"
 
 steps:
   - id: "classify"
-    agent: "classifier"
+    agent: "foundation:classifier"
     prompt: "Classify {{input}} as: simple, medium, complex"
     output: "classification"
 
   - id: "simple-process"
     condition: "{{classification}} == 'simple'"
-    agent: "simple-processor"
+    agent: "foundation:simple-processor"
     prompt: "Process simple case: {{input}}"
     output: "result"
 
   - id: "medium-process"
     condition: "{{classification}} == 'medium'"
-    agent: "medium-processor"
+    agent: "foundation:medium-processor"
     prompt: "Process medium complexity case: {{input}}"
     output: "result"
 
   - id: "complex-process"
     condition: "{{classification}} == 'complex'"
-    agent: "complex-processor"
+    agent: "foundation:complex-processor"
     prompt: "Process complex case: {{input}}"
     output: "result"
 ```
@@ -420,19 +420,19 @@ steps:
 name: "error-tolerant"
 steps:
   - id: "critical-analysis"
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: "Core analysis"
     output: "analysis"
     # Default: on_error="fail"
 
   - id: "optional-enhancement"
-    agent: "enhancer"
+    agent: "foundation:enhancer"
     prompt: "Enhance: {{analysis}}"
     output: "enhanced"
     on_error: "continue"  # Don't fail recipe if this fails
 
   - id: "final-report"
-    agent: "reporter"
+    agent: "foundation:reporter"
     prompt: |
       Report:
       Analysis: {{analysis}}
@@ -490,7 +490,7 @@ amplifier run "create a code review recipe"
 
 ```yaml
 - id: "security-scan"
-  agent: "security-guardian"
+  agent: "foundation:security-guardian"
   prompt: "Scan {{file_path}} for security vulnerabilities"
   output: "security_findings"
 ```
@@ -565,7 +565,7 @@ tags: ["security", "code-review", "python"]
 
 ```yaml
 - id: "creative-brainstorm"
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   agent_config:
     providers:
       - module: "provider-anthropic"
@@ -589,7 +589,7 @@ tags: ["security", "code-review", "python"]
 
 ```yaml
 - id: "external-api-call"
-  agent: "data-fetcher"
+  agent: "foundation:data-fetcher"
   prompt: "Fetch data from external API"
   timeout: 300       # 5 minutes max
   retry:
@@ -611,7 +611,7 @@ tags: ["security", "code-review", "python"]
 
 ```yaml
 - id: "detailed-analysis"
-  agent: "analyzer"
+  agent: "foundation:analyzer"
   prompt: |
     Perform detailed analysis of {{file_path}}:
 
@@ -637,7 +637,7 @@ tags: ["security", "code-review", "python"]
 
 ```yaml
 - id: "generate-report"
-  agent: "reporter"
+  agent: "foundation:reporter"
   prompt: |
     Generate review report:
 
@@ -688,7 +688,7 @@ context:
 
 steps:
   - id: "test-step"
-    agent: "test-agent"
+    agent: "foundation:test-agent"
     prompt: "Process: {{test_input}}"
     output: "result"
 ```

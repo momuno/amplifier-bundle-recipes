@@ -97,10 +97,10 @@ Make all step IDs unique:
 ```yaml
 steps:
   - id: "analyze-security"    # Unique
-    agent: "security-guardian"
+    agent: "foundation:security-guardian"
 
   - id: "analyze-performance" # Different from above
-    agent: "performance-optimizer"
+    agent: "foundation:performance-optimizer"
 ```
 
 ### Error: "Invalid version format: [version]"
@@ -203,9 +203,9 @@ Error: Agent not found: custom-analyzer
 3. **Check agent name spelling:**
    ```yaml
    # Common misspellings
-   agent: "zen-architect"    # ✅ Correct
-   agent: "zenarchitect"     # ❌ Missing hyphen
-   agent: "zen_architect"    # ❌ Underscore instead of hyphen
+   agent: "foundation:zen-architect"    # ✅ Correct
+   agent: "foundation:zenarchitect"     # ❌ Missing hyphen
+   agent: "foundation:zen_architect"    # ❌ Underscore instead of hyphen
    ```
 
 4. **Verify agent in profile:**
@@ -429,7 +429,7 @@ Error: Session state corrupted or incomplete
 
 2. **Specify agent mode (if applicable):**
    ```yaml
-   - agent: "zen-architect"
+   - agent: "foundation:zen-architect"
      mode: "ANALYZE"  # Specify mode explicitly
    ```
 

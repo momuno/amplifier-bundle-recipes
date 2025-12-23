@@ -224,12 +224,12 @@ description: "Sequential processing without approval gates"
 
 steps:
   - id: "analyze"
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: "Analyze {{input}}"
     output: "analysis"
   
   - id: "process"
-    agent: "processor"
+    agent: "foundation:processor"
     prompt: "Process {{analysis}}"
     output: "result"
 ```
@@ -258,7 +258,7 @@ stages:
   - name: "planning"
     steps:
       - id: "analyze"
-        agent: "analyzer"
+        agent: "foundation:analyzer"
         prompt: "Analyze {{input}}"
         output: "analysis"
     approval:
@@ -270,7 +270,7 @@ stages:
   - name: "execution"
     steps:
       - id: "execute"
-        agent: "executor"
+        agent: "foundation:executor"
         prompt: "Execute based on {{analysis}}"
         output: "result"
 ```
@@ -409,7 +409,7 @@ approval:
 - name: "analysis"
   steps:
     - id: "audit"
-      agent: "auditor"
+      agent: "foundation:auditor"
       prompt: "Audit security"
       output: "findings"
   approval:
@@ -487,13 +487,13 @@ Each step represents one unit of work in the workflow. Steps can be agent invoca
 ```yaml
 # Default: agent step
 - id: "analyze"
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   prompt: "Analyze the code"
 
 # Explicit agent step
 - id: "review"
   type: "agent"
-  agent: "code-reviewer"
+  agent: "foundation:code-reviewer"
   prompt: "Review the implementation"
 
 # Recipe step (sub-workflow)
@@ -512,26 +512,40 @@ See [Recipe Composition](#recipe-composition) for complete details on recipe ste
 
 #### `agent` (required for agent steps)
 
-**Type:** string (agent name)
+**Type:** string (agent name with bundle namespace)
 **Purpose:** Specify which agent to spawn for this step.
 
+**Naming convention:**
+Agents MUST use namespaced references in the format `bundle:agent-name`:
+- `foundation:zen-architect` - Agent from the foundation bundle
+- `foundation:bug-hunter` - Agent from the foundation bundle
+- `foundation:security-guardian` - Agent from the foundation bundle
+
+**Important: Agent references create bundle dependencies.**
+When a recipe references an agent like `foundation:zen-architect`, it requires:
+1. The foundation bundle (or a bundle that includes foundation) to be loaded
+2. The agent to be available through the coordinator
+
 **Agent sources:**
-- Built-in agents (installed via collections)
-- Profile-defined agents (in your active profile)
-- Custom agents (in `.amplifier/agents/`)
+- Bundle agents (available via `bundle:agent-name` format)
+- Custom agents (in `.amplifier/agents/` for local development)
 
 **Examples:**
 ```yaml
-- agent: "zen-architect"
-- agent: "bug-hunter"
-- agent: "test-coverage"
-- agent: "custom-analyzer"
+- agent: "foundation:zen-architect"
+- agent: "foundation:bug-hunter"
+- agent: "foundation:test-coverage"
+- agent: "foundation:security-guardian"
 ```
 
 **Validation:**
-- Agent must be available when recipe executes
+- Agent must be available via coordinator when recipe executes
+- Recipes should document required agents in header comments
 - Tool checks agent availability before starting recipe
 - Fails fast if agent not found
+
+**Bundle dependency implications:**
+If your recipe uses agents from a bundle, that bundle (or one that includes it) must be loaded. The recipes bundle includes the foundation bundle, so `foundation:*` agents are available by default when using the recipes bundle.
 
 #### `recipe` (required for recipe steps)
 
@@ -618,26 +632,26 @@ See [Recipe Composition](#recipe-composition) for complete details on recipe ste
 
 **Example (zen-architect):**
 
-The `developer-expertise:zen-architect` agent supports three modes:
+The `foundation:zen-architect` agent supports three modes:
 - `ANALYZE`: For breaking down problems and designing solutions
 - `ARCHITECT`: For system design and module specification
 - `REVIEW`: For code quality assessment and recommendations
 
 ```yaml
 - id: "design"
-  agent: "developer-expertise:zen-architect"
+  agent: "foundation:zen-architect"
   mode: "ARCHITECT"
   prompt: "Design a caching layer for the API"
 
 - id: "review"
-  agent: "developer-expertise:zen-architect"
+  agent: "foundation:zen-architect"
   mode: "REVIEW"
   prompt: "Review the implementation for simplicity and maintainability"
 ```
 
 **Important notes:**
 - Not all agents support modes. If an agent doesn't recognize the MODE prefix, it will simply treat it as part of the instruction text.
-- Modes are defined by each agent. See agent documentation (e.g., `@developer-expertise:agents/zen-architect.md`) for supported modes and their meanings.
+- Modes are defined by each agent. See agent documentation (e.g., `foundation/agents/zen-architect.md`) for supported modes and their meanings.
 - If omitted, the agent uses its default behavior.
 
 #### `prompt` (required)
@@ -708,7 +722,7 @@ Simple equality:
 ```yaml
 - id: "critical-fix"
   condition: "{{severity}} == 'critical'"
-  agent: "auto-fixer"
+  agent: "foundation:auto-fixer"
   prompt: "Auto-fix critical issues"
 ```
 
@@ -716,7 +730,7 @@ With nested variable access:
 ```yaml
 - id: "apply-fixes"
   condition: "{{analysis.severity}} == 'critical'"
-  agent: "fixer"
+  agent: "foundation:fixer"
   prompt: "Apply fixes for: {{analysis.issues}}"
 ```
 
@@ -724,7 +738,7 @@ Compound conditions:
 ```yaml
 - id: "deploy"
   condition: "{{tests_passed}} == 'true' and {{review_approved}} == 'true'"
-  agent: "deployer"
+  agent: "foundation:deployer"
   prompt: "Deploy to production"
 ```
 
@@ -732,7 +746,7 @@ Alternative conditions:
 ```yaml
 - id: "escalate"
   condition: "{{severity}} == 'critical' or {{severity}} == 'high'"
-  agent: "notifier"
+  agent: "foundation:notifier"
   prompt: "Escalate to on-call team"
 ```
 
@@ -759,14 +773,14 @@ See [Condition Expressions](#condition-expressions) for complete syntax referenc
 **Examples:**
 ```yaml
 - id: "discover-files"
-  agent: "explorer"
+  agent: "foundation:explorer"
   prompt: "List all Python files in {{directory}}"
   output: "files"  # Returns list: ["a.py", "b.py", "c.py"]
 
 - id: "analyze-each"
   foreach: "{{files}}"
   as: "current_file"
-  agent: "analyzer"
+  agent: "foundation:analyzer"
   prompt: "Analyze {{current_file}} for issues"
   collect: "file_analyses"
 ```
@@ -903,7 +917,7 @@ See [Looping and Iteration](#looping-and-iteration) for complete syntax referenc
 **Example:**
 ```yaml
 - id: "creative-brainstorm"
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   agent_config:
     providers:
       - module: "provider-anthropic"
@@ -954,7 +968,7 @@ retry:
 **Example:**
 ```yaml
 - id: "fetch-data"
-  agent: "data-fetcher"
+  agent: "foundation:data-fetcher"
   prompt: "Fetch latest data from API"
   retry:
     max_attempts: 5
@@ -980,7 +994,7 @@ retry:
 **Examples:**
 ```yaml
 - id: "optional-validation"
-  agent: "validator"
+  agent: "foundation:validator"
   prompt: "Validate results"
   on_error: "continue"  # Don't fail recipe if validation fails
 ```
@@ -1203,24 +1217,24 @@ context:
 
 steps:
   - id: "analyze"
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: "Analyze {{file_path}} for issues"
     output: "analysis"
 
   - id: "critical-fix"
     condition: "{{analysis.severity}} == 'critical'"
-    agent: "fixer"
+    agent: "foundation:fixer"
     prompt: "Fix critical issues in {{file_path}}: {{analysis.issues}}"
     output: "fixes"
 
   - id: "high-priority-review"
     condition: "{{analysis.severity}} == 'high' or {{analysis.severity}} == 'critical'"
-    agent: "reviewer"
+    agent: "foundation:reviewer"
     prompt: "Review high-priority issues: {{analysis}}"
     output: "review"
 
   - id: "report"
-    agent: "reporter"
+    agent: "foundation:reporter"
     prompt: |
       Generate report:
       Analysis: {{analysis}}
@@ -1249,7 +1263,7 @@ Steps with a `foreach` field iterate over a list variable, executing the step on
 - id: "process-each"
   foreach: "{{items}}"     # Variable containing list
   as: "current_item"       # Loop variable name (default: "item")
-  agent: "processor"
+  agent: "foundation:processor"
   prompt: "Process {{current_item}}"
   collect: "all_results"   # Aggregates iteration results
 ```
@@ -1310,7 +1324,7 @@ Add `parallel: true` to run all iterations concurrently:
   as: "perspective"
   collect: "analyses"
   parallel: true  # Run all iterations simultaneously
-  agent: "zen-architect"
+  agent: "foundation:zen-architect"
   prompt: "Analyze from {{perspective}} perspective"
 ```
 
@@ -1357,14 +1371,14 @@ context:
 
 steps:
   - id: "discover-files"
-    agent: "explorer"
+    agent: "foundation:explorer"
     prompt: "List all Python files in {{directory}}"
     output: "files"
 
   - id: "analyze-each"
     foreach: "{{files}}"
     as: "current_file"
-    agent: "analyzer"
+    agent: "foundation:analyzer"
     prompt: |
       Analyze {{current_file}} for:
       - Code complexity
@@ -1373,7 +1387,7 @@ steps:
     collect: "file_analyses"
 
   - id: "synthesize"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Synthesize these individual file analyses into overall findings:
@@ -1518,7 +1532,7 @@ steps:
     output: "performance_findings"
 
   - id: "synthesize"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     prompt: |
       Synthesize findings:
       Security: {{security_findings}}
@@ -1538,12 +1552,12 @@ context:
 
 steps:
   - id: "scan"
-    agent: "security-guardian"
+    agent: "foundation:security-guardian"
     prompt: "Scan {{target_file}} for vulnerabilities at {{severity_threshold}} severity"
     output: "scan_results"
 
   - id: "classify"
-    agent: "security-guardian"
+    agent: "foundation:security-guardian"
     prompt: "Classify findings: {{scan_results}}"
     output: "classified_findings"
 ```
@@ -1649,6 +1663,37 @@ Before execution:
 - [ ] Session directory writable
 - [ ] No conflicting sessions for same recipe
 
+### Agent Availability Validation
+
+The recipe validator can check if agents are available via the coordinator:
+
+```python
+from amplifier_module_tool_recipes.validator import validate_recipe
+
+# Pass coordinator to enable agent availability checking
+result = validate_recipe(recipe, coordinator=coordinator)
+
+if result.warnings:
+    # Agent availability issues are warnings (not errors)
+    # since availability may vary by environment
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+```
+
+**How agent validation works:**
+1. The validator checks `coordinator.available_agents` property
+2. If the property exists, it compares agent names in the recipe against available agents
+3. Unavailable agents generate warnings (not errors) since:
+   - Agent availability varies by environment and bundle configuration
+   - The agent may be available at runtime even if not at validation time
+
+**For the coordinator to support agent validation:**
+- Provide an `available_agents` property or method
+- Return a list/set/dict of available agent names (including namespace)
+- Example: `["foundation:zen-architect", "foundation:bug-hunter", ...]`
+
+**Best practice:** Always use namespaced agent references (`foundation:agent-name`) to make bundle dependencies explicit and enable accurate validation.
+
 ---
 
 ## Complete Example
@@ -1669,7 +1714,7 @@ context:
 
 steps:
   - id: "security-scan"
-    agent: "security-guardian"
+    agent: "foundation:security-guardian"
     prompt: |
       Perform security audit on {{file_path}}
       Focus on severity: {{severity_threshold}}
@@ -1680,13 +1725,13 @@ steps:
       backoff: "exponential"
 
   - id: "performance-analysis"
-    agent: "performance-optimizer"
+    agent: "foundation:performance-optimizer"
     prompt: "Analyze {{file_path}} for performance bottlenecks"
     output: "performance_findings"
     timeout: 600
 
   - id: "maintainability-review"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     mode: "REVIEW"
     prompt: |
       Review {{file_path}} for:
@@ -1697,7 +1742,7 @@ steps:
     timeout: 300
 
   - id: "synthesize-findings"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: |
       Synthesize findings from:
@@ -1711,7 +1756,7 @@ steps:
     timeout: 300
 
   - id: "generate-report"
-    agent: "zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Create comprehensive review report:

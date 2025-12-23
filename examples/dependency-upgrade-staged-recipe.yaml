@@ -35,7 +35,7 @@ stages:
   - name: "assessment"
     steps:
       - id: "audit-dependencies"
-        agent: "developer-expertise:integration-specialist"
+        agent: "foundation:integration-specialist"
         prompt: |
           Audit Python dependencies in {{project_path}}:
 
@@ -58,7 +58,7 @@ stages:
         timeout: 600
 
       - id: "plan-upgrade-strategy"
-        agent: "developer-expertise:zen-architect"
+        agent: "foundation:zen-architect"
         mode: "ARCHITECT"
         prompt: |
           Based on this dependency audit: {{dependency_audit}}
@@ -101,7 +101,7 @@ stages:
         Deny to stop and review the plan manually.
     steps:
       - id: "validate-compatibility"
-        agent: "developer-expertise:integration-specialist"
+        agent: "foundation:integration-specialist"
         prompt: |
           Validate compatibility for this upgrade plan: {{upgrade_plan}}
 
@@ -138,7 +138,7 @@ stages:
         Approve to generate Phase 1 upgrade commands.
     steps:
       - id: "generate-phase1-commands"
-        agent: "developer-expertise:integration-specialist"
+        agent: "foundation:integration-specialist"
         prompt: |
           Generate Phase 1 upgrade commands (CRITICAL SECURITY FIXES).
 
@@ -174,7 +174,7 @@ stages:
         You can also deny and execute Phase 1 commands first.
     steps:
       - id: "generate-phase2-commands"
-        agent: "developer-expertise:integration-specialist"
+        agent: "foundation:integration-specialist"
         prompt: |
           Generate Phase 2 upgrade commands (MINOR VERSION UPDATES).
 
@@ -210,7 +210,7 @@ stages:
         Deny if you want to stop here and apply earlier phases first.
     steps:
       - id: "generate-phase3-commands"
-        agent: "developer-expertise:integration-specialist"
+        agent: "foundation:integration-specialist"
         prompt: |
           Generate Phase 3 upgrade commands (MAJOR VERSION UPDATES).
 

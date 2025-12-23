@@ -72,7 +72,7 @@ steps:
   # Step 3: Synthesize results from both sub-recipes
   # This step has access to outputs from both sub-recipes
   - id: "synthesize-comprehensive"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: |
       Create a comprehensive review report combining code quality and security findings.
