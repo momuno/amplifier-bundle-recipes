@@ -63,4 +63,4 @@ For a catalog of all examples with descriptions, see @recipes:docs/EXAMPLES_CATA
 
 ---
 
-@foundation:context/shared/common-profile-base.md
+@foundation:context/shared/common-system-base.md
