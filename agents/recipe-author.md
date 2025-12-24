@@ -16,7 +16,7 @@ The recipe-author agent helps users create, validate, and refine Amplifier recip
 
 **Configuration Overlay** (Sub-session delegation)
 
-This agent is available globally when the amplifier-collection-recipes collection is installed. It can be invoked via the main profile for conversational recipe authoring.
+This agent is available when the recipes bundle is included. It can be invoked for conversational recipe authoring.
 
 ## Capabilities
 
@@ -96,14 +96,14 @@ The agent knows common recipe patterns:
 
 The agent should be aware of common Amplifier agents:
 
-- developer-expertise:zen-architect (ANALYZE, ARCHITECT, REVIEW modes)
-- developer-expertise:bug-hunter (debugging)
-- developer-expertise:security-guardian (security audits)
-- developer-expertise:performance-optimizer (performance analysis)
-- developer-expertise:test-coverage (test generation)
-- developer-expertise:integration-specialist (integration tasks)
+- foundation:zen-architect (ANALYZE, ARCHITECT, REVIEW modes)
+- foundation:bug-hunter (debugging)
+- foundation:security-guardian (security audits)
+- foundation:performance-optimizer (performance analysis)
+- foundation:test-coverage (test generation)
+- foundation:integration-specialist (integration tasks)
 
-**Note:** Agent names must include their collection prefix (e.g., `developer-expertise:zen-architect`). Users with custom agents should use their configured agent names with appropriate prefixes.
+**Note:** Agent names use their bundle namespace (e.g., `foundation:zen-architect`). Users with custom agents should use their configured agent names with appropriate namespaces.
 
 ### Best Practices
 
@@ -287,7 +287,7 @@ steps:
     output: "security_results"
   
   - id: "synthesize"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: |
       Synthesize findings:
@@ -353,19 +353,19 @@ context:
 
 steps:
   - id: "security-analysis"
-    agent: "developer-expertise:security-guardian"
+    agent: "foundation:security-guardian"
     prompt: "Perform security analysis on {{file_path}}"
     output: "security_findings"
     timeout: 600
 
   - id: "performance-analysis"
-    agent: "developer-expertise:performance-optimizer"
+    agent: "foundation:performance-optimizer"
     prompt: "Analyze {{file_path}} for performance issues and bottlenecks"
     output: "performance_findings"
     timeout: 600
 
   - id: "synthesize-findings"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
       Synthesize these findings:
@@ -377,7 +377,7 @@ steps:
     output: "synthesis"
 
   - id: "suggest-improvements"
-    agent: "developer-expertise:zen-architect"
+    agent: "foundation:zen-architect"
     mode: "ARCHITECT"
     prompt: |
       Based on this synthesis: {{synthesis}}
@@ -402,7 +402,7 @@ I've validated this recipe and it looks good:
 ✅ All required fields present
 ✅ Step IDs unique
 ✅ Context variables properly referenced
-✅ Agents available (developer-expertise:security-guardian, developer-expertise:performance-optimizer, developer-expertise:zen-architect)
+✅ Agents available (foundation:security-guardian, foundation:performance-optimizer, foundation:zen-architect)
 ✅ Prompts clear and specific
 ✅ Timeouts appropriate (10 minutes per analysis step)
 
@@ -629,15 +629,15 @@ amplifier run "improve error handling in my-recipe.yaml"
 amplifier run "explain what examples/dependency-upgrade.yaml does"
 ```
 
-## Integration with Collection
+## Integration with Bundle
 
-The recipe-author agent is automatically available when the amplifier-collection-recipes collection is installed:
+The recipe-author agent is automatically available when the recipes bundle is included:
 
 ```bash
-# Install collection
-amplifier collection add git+https://github.com/microsoft/amplifier-collection-recipes@main
+# Use the recipes bundle
+amplifier bundle use git+https://github.com/microsoft/amplifier-bundle-recipes@main
 
-# recipe-author agent now available globally
+# recipe-author agent now available
 amplifier run "create a recipe for code analysis"
 ```
 
