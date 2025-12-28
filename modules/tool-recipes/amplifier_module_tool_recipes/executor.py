@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 import re
 from dataclasses import dataclass
 from dataclasses import field
@@ -259,6 +260,9 @@ class RecipeExecutor:
                         # Track step execution for recursion limits
                         recursion_state.increment_steps()
                         result = await self.execute_step_with_retry(step, context)
+
+                    # Process result: unwrap spawn() output and auto-parse JSON
+                    result = self._process_step_result(result)
 
                     # Store output if specified
                     if step.output:
@@ -578,6 +582,43 @@ class RecipeExecutor:
         if step.on_error == "fail" and last_error:
             raise last_error
         return None
+
+    def _process_step_result(self, result: Any) -> Any:
+        """
+        Process step result: unwrap spawn() output and auto-parse JSON.
+
+        This method handles two transformations:
+        1. Unwrap spawn() results from {"output": text, "session_id": id} format
+        2. Auto-detect and parse JSON strings into native Python objects
+
+        Args:
+            result: Raw result from step execution
+
+        Returns:
+            Processed result (unwrapped and/or parsed)
+        """
+        # Step 1: Unwrap spawn() result if it's a dict with "output" key
+        if isinstance(result, dict) and "output" in result:
+            output = result["output"]
+        else:
+            output = result
+
+        # Step 2: Try to parse as JSON if it's a string
+        if isinstance(output, str):
+            # Strip whitespace for cleaner parsing
+            output_stripped = output.strip()
+            
+            if output_stripped:
+                try:
+                    # Attempt JSON parsing
+                    parsed = json.loads(output_stripped)
+                    return parsed
+                except (json.JSONDecodeError, ValueError):
+                    # Not valid JSON - keep as string
+                    pass
+
+        # Return as-is if not string or parsing failed
+        return output
 
     async def execute_step(self, step: Step, context: dict[str, Any]) -> Any:
         """
