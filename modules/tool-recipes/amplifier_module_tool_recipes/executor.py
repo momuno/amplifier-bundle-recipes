@@ -589,7 +589,7 @@ class RecipeExecutor:
 
         This method handles two transformations:
         1. Unwrap spawn() results from {"output": text, "session_id": id} format
-        2. Auto-detect and parse JSON strings into native Python objects
+        2. Auto-detect and parse JSON from agent responses (tries multiple strategies)
 
         Args:
             result: Raw result from step execution
@@ -603,21 +603,52 @@ class RecipeExecutor:
         else:
             output = result
 
-        # Step 2: Try to parse as JSON if it's a string
+        # Step 2: Try to extract and parse JSON if it's a string
         if isinstance(output, str):
-            # Strip whitespace for cleaner parsing
             output_stripped = output.strip()
             
             if output_stripped:
+                # Strategy 1: Entire string is valid JSON (cleanest case)
                 try:
-                    # Attempt JSON parsing
                     parsed = json.loads(output_stripped)
                     return parsed
                 except (json.JSONDecodeError, ValueError):
-                    # Not valid JSON - keep as string
                     pass
 
-        # Return as-is if not string or parsing failed
+                # Strategy 2: Extract from markdown code block
+                # Matches ```json or ``` followed by JSON
+                json_match = re.search(
+                    r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```',
+                    output_stripped,
+                    re.DOTALL
+                )
+                if json_match:
+                    try:
+                        parsed = json.loads(json_match.group(1))
+                        return parsed
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
+                # Strategy 3: Find JSON object/array embedded in text
+                # Use JSONDecoder.raw_decode() which can parse JSON with trailing text
+                # Scan for positions of { or [ and try parsing from each position
+                decoder = json.JSONDecoder()
+                for start_char in ['{', '[']:
+                    idx = output_stripped.find(start_char)
+                    while idx != -1:
+                        # Try to parse JSON starting from this position
+                        # raw_decode() returns (obj, end_index) and allows trailing text
+                        try:
+                            parsed, end_idx = decoder.raw_decode(output_stripped, idx)
+                            return parsed
+                        except (json.JSONDecodeError, ValueError):
+                            # Not valid JSON from this position, keep looking
+                            pass
+                        
+                        # Find next occurrence
+                        idx = output_stripped.find(start_char, idx + 1)
+
+        # Return as-is if not string or all parsing strategies failed
         return output
 
     async def execute_step(self, step: Step, context: dict[str, Any]) -> Any:
