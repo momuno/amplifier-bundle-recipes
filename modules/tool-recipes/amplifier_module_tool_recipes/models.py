@@ -118,6 +118,9 @@ class Step:
     on_error: str = "fail"
     depends_on: list[str] = field(default_factory=list)
 
+    # JSON parsing control
+    parse_json: bool = False  # Default: preserve output as-is, only parse clean JSON
+
     # Per-step recursion override (for recipe steps only)
     recursion: RecursionConfig | None = None
 

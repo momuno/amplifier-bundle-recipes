@@ -70,6 +70,10 @@ The agent has complete knowledge of the recipe schema including:
 - **Context passing and isolation for sub-recipes**
 - **Recursion protection configuration (max_depth, max_total_steps)**
 - **Advanced features: foreach loops, conditional execution, step dependencies**
+- **JSON parsing control: parse_json field for controlling output format**
+  - Default (parse_json: false) preserves prose/markdown output
+  - Opt-in (parse_json: true) aggressively extracts JSON from text
+  - Use parse_json: true when prompting agents for structured data
 
 **Reference:** @recipes:docs/RECIPE_SCHEMA.md
 

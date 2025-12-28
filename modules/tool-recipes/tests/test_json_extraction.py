@@ -61,8 +61,46 @@ class TestRealWorldJSONExtraction:
         return RecipeExecutor(coordinator, session_manager)
 
     @pytest.mark.asyncio
-    async def test_json_in_explanatory_text(self, executor, tmp_path):
-        """Test extraction when agent wraps JSON in explanation (most common pattern)."""
+    async def test_json_in_explanatory_text_default_preserves(self, executor, tmp_path):
+        """Test that default behavior preserves prose with embedded JSON."""
+        # Simulate agent response with JSON embedded in text
+        response = """Here's what I found about the repository:
+
+{
+  "repo_url": "https://github.com/microsoft/amplifier",
+  "owner": "microsoft",
+  "repo_name": "amplifier"
+}
+
+I've successfully extracted the repository information."""
+        
+        executor.coordinator.set_responses([response])
+
+        recipe = Recipe(
+            name="test",
+            description="test",
+            version="1.0.0",
+            steps=[
+                Step(
+                    id="extract",
+                    agent="test-agent",
+                    prompt="Extract repo info",
+                    output="repo_info"
+                    # parse_json=False (default) - should preserve prose
+                )
+            ]
+        )
+
+        context = await executor.execute_recipe(recipe, {}, tmp_path)
+
+        # Default: should preserve the full prose text
+        assert isinstance(context["repo_info"], str)
+        assert "Here's what I found" in context["repo_info"]
+        assert "microsoft" in context["repo_info"]
+
+    @pytest.mark.asyncio
+    async def test_json_in_explanatory_text_with_parse_flag(self, executor, tmp_path):
+        """Test extraction when agent wraps JSON in explanation (opt-in with parse_json=true)."""
         # Simulate agent response with JSON embedded in text
         executor.coordinator.set_responses([
             """Here's what I found about the repository:
@@ -85,21 +123,61 @@ I've successfully extracted the repository information."""
                     id="extract",
                     agent="test-agent",
                     prompt="Extract repo info",
-                    output="repo_info"
+                    output="repo_info",
+                    parse_json=True  # Opt-in to aggressive extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should extract JSON from the text
+        # With parse_json=True: should extract JSON from the text
         assert isinstance(context["repo_info"], dict)
         assert context["repo_info"]["owner"] == "microsoft"
         assert context["repo_info"]["repo_name"] == "amplifier"
 
     @pytest.mark.asyncio
-    async def test_json_in_markdown_code_block(self, executor, tmp_path):
-        """Test extraction from markdown ```json code blocks."""
+    async def test_json_in_markdown_code_block_default_preserves(self, executor, tmp_path):
+        """Test that markdown code blocks are preserved by default."""
+        response = """I've analyzed the data. Here's the structured output:
+
+```json
+{
+  "files": ["test1.py", "test2.py"],
+  "count": 2,
+  "status": "complete"
+}
+```
+
+The analysis is complete."""
+        
+        executor.coordinator.set_responses([response])
+
+        recipe = Recipe(
+            name="test",
+            description="test",
+            version="1.0.0",
+            steps=[
+                Step(
+                    id="analyze",
+                    agent="test-agent",
+                    prompt="Analyze files",
+                    output="result"
+                    # parse_json=False (default)
+                )
+            ]
+        )
+
+        context = await executor.execute_recipe(recipe, {}, tmp_path)
+
+        # Default: should preserve markdown formatting
+        assert isinstance(context["result"], str)
+        assert "```json" in context["result"]
+        assert "analysis is complete" in context["result"]
+
+    @pytest.mark.asyncio
+    async def test_json_in_markdown_code_block_with_parse_flag(self, executor, tmp_path):
+        """Test extraction from markdown ```json code blocks with parse_json=true."""
         executor.coordinator.set_responses([
             """I've analyzed the data. Here's the structured output:
 
@@ -123,21 +201,22 @@ The analysis is complete."""
                     id="analyze",
                     agent="test-agent",
                     prompt="Analyze files",
-                    output="result"
+                    output="result",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should extract JSON from markdown block
+        # With parse_json=True: should extract JSON from markdown block
         assert isinstance(context["result"], dict)
         assert context["result"]["count"] == 2
         assert len(context["result"]["files"]) == 2
 
     @pytest.mark.asyncio
-    async def test_json_in_plain_code_block(self, executor, tmp_path):
-        """Test extraction from markdown ``` code blocks (no json label)."""
+    async def test_json_in_plain_code_block_with_parse_flag(self, executor, tmp_path):
+        """Test extraction from markdown ``` code blocks (no json label) with parse_json=true."""
         executor.coordinator.set_responses([
             """The data structure is:
 
@@ -157,21 +236,22 @@ That's the result."""
                     id="get-data",
                     agent="test-agent",
                     prompt="Get data",
-                    output="data"
+                    output="data",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should extract JSON from plain code block
+        # With parse_json=True: should extract JSON from plain code block
         assert isinstance(context["data"], dict)
         assert context["data"]["name"] == "test"
         assert context["data"]["value"] == 42
 
     @pytest.mark.asyncio
-    async def test_json_array_in_text(self, executor, tmp_path):
-        """Test extraction of JSON arrays from text."""
+    async def test_json_array_in_text_with_parse_flag(self, executor, tmp_path):
+        """Test extraction of JSON arrays from text with parse_json=true."""
         executor.coordinator.set_responses([
             """I found these files:
 
@@ -189,21 +269,22 @@ That's all the Python files."""
                     id="list-files",
                     agent="test-agent",
                     prompt="List files",
-                    output="files"
+                    output="files",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should extract JSON array
+        # With parse_json=True: should extract JSON array
         assert isinstance(context["files"], list)
         assert len(context["files"]) == 3
         assert "file1.py" in context["files"]
 
     @pytest.mark.asyncio
-    async def test_nested_json_in_text(self, executor, tmp_path):
-        """Test extraction of nested JSON structures."""
+    async def test_nested_json_in_text_with_parse_flag(self, executor, tmp_path):
+        """Test extraction of nested JSON structures with parse_json=true."""
         executor.coordinator.set_responses([
             """Analysis complete:
 
@@ -230,21 +311,22 @@ Review the failures."""
                     id="analyze",
                     agent="test-agent",
                     prompt="Run tests",
-                    output="test_results"
+                    output="test_results",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should preserve nested structure
+        # With parse_json=True: should preserve nested structure
         assert isinstance(context["test_results"], dict)
         assert context["test_results"]["summary"]["total"] == 10
         assert len(context["test_results"]["details"]["failures"]) == 2
 
     @pytest.mark.asyncio
-    async def test_multiline_json_in_text(self, executor, tmp_path):
-        """Test extraction of multiline JSON (common agent format)."""
+    async def test_multiline_json_in_text_with_parse_flag(self, executor, tmp_path):
+        """Test extraction of multiline JSON (common agent format) with parse_json=true."""
         executor.coordinator.set_responses([
             """Here's the configuration:
 
@@ -273,14 +355,15 @@ That should work for your project."""
                     id="get-config",
                     agent="test-agent",
                     prompt="Generate config",
-                    output="config"
+                    output="config",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should extract complete multiline JSON
+        # With parse_json=True: should extract complete multiline JSON
         assert isinstance(context["config"], dict)
         assert context["config"]["name"] == "my-app"
         assert "react" in context["config"]["dependencies"]
@@ -343,7 +426,7 @@ That should work for your project."""
 
     @pytest.mark.asyncio
     async def test_foreach_with_extracted_array(self, executor, tmp_path):
-        """Test that foreach works with extracted JSON arrays."""
+        """Test that foreach works with extracted JSON arrays when parse_json=true."""
         executor.coordinator.set_responses([
             # First response: list of items
             'I found these items:\n\n["item1", "item2", "item3"]\n\nProcess each one.',
@@ -362,7 +445,8 @@ That should work for your project."""
                     id="get-items",
                     agent="test-agent",
                     prompt="Get items",
-                    output="items"
+                    output="items",
+                    parse_json=True  # Extract array from text
                 ),
                 Step(
                     id="process-each",
@@ -384,7 +468,7 @@ That should work for your project."""
 
     @pytest.mark.asyncio
     async def test_json_with_special_characters(self, executor, tmp_path):
-        """Test extraction of JSON containing special characters."""
+        """Test extraction of JSON containing special characters with parse_json=true."""
         executor.coordinator.set_responses([
             """Here's the data:
 
@@ -406,21 +490,22 @@ Done."""
                     id="get-data",
                     agent="test-agent",
                     prompt="Get data",
-                    output="data"
+                    output="data",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should handle special characters correctly
+        # With parse_json=True: should handle special characters correctly
         assert isinstance(context["data"], dict)
         assert '"quotes"' in context["data"]["message"]
         assert context["data"]["path"] == "/home/user/file.txt"
 
     @pytest.mark.asyncio
     async def test_multiple_json_objects_takes_first(self, executor, tmp_path):
-        """Test that when multiple JSON objects exist, first one is extracted."""
+        """Test that when multiple JSON objects exist, first one is extracted with parse_json=true."""
         executor.coordinator.set_responses([
             """Here's the primary data:
 
@@ -442,14 +527,15 @@ Use the primary data."""
                     id="get-data",
                     agent="test-agent",
                     prompt="Get data",
-                    output="data"
+                    output="data",
+                    parse_json=True  # Opt-in to extraction
                 )
             ]
         )
 
         context = await executor.execute_recipe(recipe, {}, tmp_path)
 
-        # Should extract the first JSON object
+        # With parse_json=True: should extract the first JSON object
         assert isinstance(context["data"], dict)
         assert context["data"]["primary"] is True
         assert context["data"]["value"] == 1

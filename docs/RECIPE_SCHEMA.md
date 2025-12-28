@@ -904,6 +904,114 @@ See [Looping and Iteration](#looping-and-iteration) for complete syntax referenc
 - Stored results persist across session checkpoints
 - Available to all subsequent steps
 
+#### `parse_json` (optional)
+
+**Type:** boolean
+**Default:** `false`
+**Purpose:** Control JSON extraction from agent output.
+
+**Behavior:**
+
+**`parse_json: false` (default) - Conservative**:
+- Preserves output as-is (prose, markdown, formatting intact)
+- Only parses if the ENTIRE output is clean JSON (no markdown, no prose)
+- Best for human-readable outputs (analysis, reports, summaries)
+
+**`parse_json: true` - Aggressive extraction**:
+- Attempts to extract JSON using multiple strategies:
+  1. Parse entire string as JSON (clean JSON)
+  2. Extract from markdown code blocks (```json ... ```)
+  3. Find JSON object/array embedded in prose text
+- Best when prompting for structured data
+- Returns original string if no JSON found
+
+**When to use `parse_json: true`:**
+- You prompt the agent to return structured data
+- You need to parse specific fields from the response
+- The agent might wrap JSON in markdown or prose
+- You want to use the data in conditions or subsequent steps
+
+**When to use `parse_json: false` (default):**
+- You want prose/markdown output preserved
+- The agent returns analysis, summaries, or reports
+- Human readability is important
+- You don't need to parse structured fields
+
+**Examples:**
+
+Conservative default (prose preserved):
+```yaml
+- id: "analyze"
+  agent: "foundation:zen-architect"
+  prompt: "Analyze the code and provide a detailed report with recommendations"
+  output: "analysis"
+  # parse_json: false (implicit default)
+  # Result: Full prose report with formatting preserved
+```
+
+Agent returns:
+```
+Code Analysis Report
+
+The code shows 3 main issues:
+
+1. High Complexity (lines 45-52)
+   Function has cyclic complexity of 15...
+
+2. Missing Validation (line 78)
+   No input validation on email parameter...
+```
+
+Result stored: `{{analysis}}` = (the full prose above, preserved)
+
+Aggressive JSON extraction:
+```yaml
+- id: "extract-severity"
+  agent: "foundation:zen-architect"
+  prompt: |
+    From the analysis above, extract the overall severity as JSON:
+    
+    {
+      "severity": "critical|high|medium|low",
+      "issue_count": number
+    }
+  output: "severity_data"
+  parse_json: true  # Extract JSON even if wrapped in prose
+```
+
+Agent returns:
+```
+Based on the issues found, here's the severity assessment:
+
+```json
+{
+  "severity": "high",
+  "issue_count": 3
+}
+```
+
+This indicates immediate attention is needed.
+```
+
+Result stored: `{{severity_data}}` = `{"severity": "high", "issue_count": 3}`
+
+Using extracted data in conditions:
+```yaml
+- id: "conditional-action"
+  condition: "{{severity_data.severity}} == 'high'"
+  prompt: "Take action for high severity"
+  # This step only runs if severity is "high"
+```
+
+**Backwards Compatibility:**
+
+Existing recipes without `parse_json` continue working:
+- Clean JSON responses still parse correctly (no change)
+- Prose/markdown responses now preserved (improvement, not breaking)
+- If you were relying on aggressive extraction, add `parse_json: true`
+
+**Note:** If the agent returns pure JSON (without markdown/prose), both settings parse it successfully. The difference only matters when JSON is embedded in other text.
+
 #### `agent_config` (optional)
 
 **Type:** dictionary (partial agent config)

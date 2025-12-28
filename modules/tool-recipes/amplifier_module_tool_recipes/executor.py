@@ -261,8 +261,8 @@ class RecipeExecutor:
                         recursion_state.increment_steps()
                         result = await self.execute_step_with_retry(step, context)
 
-                    # Process result: unwrap spawn() output and auto-parse JSON
-                    result = self._process_step_result(result)
+                    # Process result: unwrap spawn() output and optionally parse JSON
+                    result = self._process_step_result(result, step)
 
                     # Store output if specified
                     if step.output:
@@ -583,17 +583,74 @@ class RecipeExecutor:
             raise last_error
         return None
 
-    def _process_step_result(self, result: Any) -> Any:
+    def _extract_json_aggressively(self, output: str) -> Any:
         """
-        Process step result: unwrap spawn() output and auto-parse JSON.
+        Aggressively extract JSON from output using multiple strategies.
+        
+        Only called when parse_json: true is set on the step.
+        
+        Strategies (in order):
+        1. Entire string is valid JSON
+        2. Extract from markdown code block (```json ... ```)
+        3. Find JSON object/array embedded in text
+        
+        Args:
+            output: String output from agent
+            
+        Returns:
+            Parsed JSON object/array, or original string if no JSON found
+        """
+        output_stripped = output.strip()
+        
+        if not output_stripped:
+            return output
+        
+        # Strategy 1: Entire string is valid JSON
+        try:
+            return json.loads(output_stripped)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        
+        # Strategy 2: Extract from markdown code block
+        json_match = re.search(
+            r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```',
+            output_stripped,
+            re.DOTALL
+        )
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except (json.JSONDecodeError, ValueError):
+                pass
+        
+        # Strategy 3: Find JSON embedded in text
+        decoder = json.JSONDecoder()
+        for start_char in ['{', '[']:
+            idx = output_stripped.find(start_char)
+            while idx != -1:
+                try:
+                    parsed, end_idx = decoder.raw_decode(output_stripped, idx)
+                    return parsed
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                idx = output_stripped.find(start_char, idx + 1)
+        
+        # All strategies failed - return as-is
+        return output
 
-        This method handles two transformations:
-        1. Unwrap spawn() results from {"output": text, "session_id": id} format
-        2. Auto-detect and parse JSON from agent responses (tries multiple strategies)
-
+    def _process_step_result(self, result: Any, step: Step) -> Any:
+        """
+        Process step result: unwrap spawn() output and optionally parse JSON.
+        
+        By default, preserves output as-is (prose, markdown, formatting).
+        Only parses JSON if:
+        - The ENTIRE output is clean JSON (no markdown, no prose), OR
+        - The step has parse_json: true set (aggressive extraction)
+        
         Args:
             result: Raw result from step execution
-
+            step: Step configuration (to check parse_json flag)
+        
         Returns:
             Processed result (unwrapped and/or parsed)
         """
@@ -602,53 +659,21 @@ class RecipeExecutor:
             output = result["output"]
         else:
             output = result
-
-        # Step 2: Try to extract and parse JSON if it's a string
+        
+        # Step 2: Parse JSON if requested
+        if isinstance(output, str) and step.parse_json:
+            # Opt-in aggressive JSON extraction
+            return self._extract_json_aggressively(output)
+        
+        # Step 3: Conservative default - only parse clean JSON
         if isinstance(output, str):
             output_stripped = output.strip()
-            
             if output_stripped:
-                # Strategy 1: Entire string is valid JSON (cleanest case)
                 try:
-                    parsed = json.loads(output_stripped)
-                    return parsed
+                    return json.loads(output_stripped)
                 except (json.JSONDecodeError, ValueError):
                     pass
-
-                # Strategy 2: Extract from markdown code block
-                # Matches ```json or ``` followed by JSON
-                json_match = re.search(
-                    r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```',
-                    output_stripped,
-                    re.DOTALL
-                )
-                if json_match:
-                    try:
-                        parsed = json.loads(json_match.group(1))
-                        return parsed
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-
-                # Strategy 3: Find JSON object/array embedded in text
-                # Use JSONDecoder.raw_decode() which can parse JSON with trailing text
-                # Scan for positions of { or [ and try parsing from each position
-                decoder = json.JSONDecoder()
-                for start_char in ['{', '[']:
-                    idx = output_stripped.find(start_char)
-                    while idx != -1:
-                        # Try to parse JSON starting from this position
-                        # raw_decode() returns (obj, end_index) and allows trailing text
-                        try:
-                            parsed, end_idx = decoder.raw_decode(output_stripped, idx)
-                            return parsed
-                        except (json.JSONDecodeError, ValueError):
-                            # Not valid JSON from this position, keep looking
-                            pass
-                        
-                        # Find next occurrence
-                        idx = output_stripped.find(start_char, idx + 1)
-
-        # Return as-is if not string or all parsing strategies failed
+        
         return output
 
     async def execute_step(self, step: Step, context: dict[str, Any]) -> Any:

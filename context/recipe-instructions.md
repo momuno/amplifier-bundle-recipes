@@ -36,6 +36,7 @@ You have access to the **recipes** tool for multi-step AI agent orchestration.
 - **Resumability**: Sessions are checkpointed after each step for recovery
 - **Foreach Loops**: Iterate over collections with `foreach:` syntax
 - **Conditional Execution**: Branch based on results with `condition:` expressions
+- **JSON Parsing Control**: Use `parse_json: true` on steps to extract structured data from agent prose
 
 ## Specialized Agents
 
