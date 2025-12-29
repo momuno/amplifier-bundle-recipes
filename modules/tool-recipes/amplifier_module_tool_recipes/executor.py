@@ -430,6 +430,9 @@ class RecipeExecutor:
                             recursion_state.increment_steps()
                             result = await self.execute_step_with_retry(step, context)
 
+                        # Process result: unwrap spawn() output and optionally parse JSON
+                        result = self._process_step_result(result, step)
+
                         if step.output:
                             context[step.output] = result
 
@@ -811,6 +814,9 @@ class RecipeExecutor:
                 else:
                     recursion_state.increment_steps()
                     result = await self.execute_step_with_retry(step, context)
+                
+                # Process result: unwrap spawn() output and optionally parse JSON
+                result = self._process_step_result(result, step)
                 results.append(result)
             except SkipRemainingError:
                 # Propagate skip_remaining
@@ -859,10 +865,14 @@ class RecipeExecutor:
 
             try:
                 if step.type == "recipe":
-                    return await self._execute_recipe_step(
+                    result = await self._execute_recipe_step(
                         step, iter_context, project_path, recursion_state, recipe_path
                     )
-                return await self.execute_step_with_retry(step, iter_context)
+                else:
+                    result = await self.execute_step_with_retry(step, iter_context)
+                
+                # Process result: unwrap spawn() output and optionally parse JSON
+                return self._process_step_result(result, step)
             except SkipRemainingError:
                 raise
             except Exception as e:
