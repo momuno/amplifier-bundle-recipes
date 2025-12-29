@@ -938,18 +938,30 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         """
         assert step.recipe is not None, "Recipe step must have recipe path"
 
-        # Resolve sub-recipe path relative to parent recipe's directory (not project_path)
-        # This allows recipes to reference sibling recipes naturally
-        if parent_recipe_path is not None:
-            base_dir = parent_recipe_path.parent
-        else:
-            base_dir = project_path
-
         # Substitute variables in recipe path (e.g., {{test_recipe}} in foreach loops)
         recipe_path_str = self.substitute_variables(step.recipe, context)
-        sub_recipe_path = base_dir / recipe_path_str
-        if not sub_recipe_path.exists():
-            raise FileNotFoundError(f"Sub-recipe not found: {sub_recipe_path}")
+
+        # Handle @mention paths (e.g., @recipes:examples/code-review.yaml)
+        if recipe_path_str.startswith("@"):
+            mention_resolver = self.coordinator.get_capability("mention_resolver")
+            if mention_resolver is None:
+                raise FileNotFoundError(
+                    f"Cannot resolve @mention path '{recipe_path_str}': mention_resolver capability not available"
+                )
+            sub_recipe_path = mention_resolver.resolve(recipe_path_str)
+            if sub_recipe_path is None:
+                raise FileNotFoundError(f"Sub-recipe @mention not found: {recipe_path_str}")
+        else:
+            # Resolve sub-recipe path relative to parent recipe's directory (not project_path)
+            # This allows recipes to reference sibling recipes naturally
+            if parent_recipe_path is not None:
+                base_dir = parent_recipe_path.parent
+            else:
+                base_dir = project_path
+
+            sub_recipe_path = base_dir / recipe_path_str
+            if not sub_recipe_path.exists():
+                raise FileNotFoundError(f"Sub-recipe not found: {sub_recipe_path}")
 
         # Load sub-recipe
         sub_recipe = Recipe.from_yaml(sub_recipe_path)
