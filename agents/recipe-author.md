@@ -94,7 +94,7 @@ The agent knows common recipe patterns:
 - Conditional step execution based on context
 - Step dependencies and explicit ordering
 
-**Reference:** `docs/RECIPES_GUIDE.md#design-patterns`
+**Reference:** @recipes:docs/RECIPES_GUIDE.md
 
 ### Available Agents
 
@@ -120,7 +120,7 @@ The agent understands:
 - Timeout and retry configuration
 - Testing and validation approaches
 
-**Reference:** `docs/BEST_PRACTICES.md`
+**Reference:** @recipes:docs/BEST_PRACTICES.md
 
 ## Interaction Patterns
 
@@ -675,7 +675,8 @@ The recipe-author agent embodies Amplifier's core principles:
 ---
 
 **See Also:**
-- [Recipe Schema Reference](../docs/RECIPE_SCHEMA.md)
-- [Recipes Guide](../docs/RECIPES_GUIDE.md)
-- [Best Practices](../docs/BEST_PRACTICES.md)
-- [Examples Catalog](../docs/EXAMPLES_CATALOG.md)
+- Recipe Schema Reference: @recipes:docs/RECIPE_SCHEMA.md
+- Recipes Guide: @recipes:docs/RECIPES_GUIDE.md
+- Best Practices: @recipes:docs/BEST_PRACTICES.md
+- Examples Catalog: @recipes:docs/EXAMPLES_CATALOG.md
+- Troubleshooting: @recipes:docs/TROUBLESHOOTING.md
