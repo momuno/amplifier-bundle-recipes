@@ -46,45 +46,52 @@ context:
   pr_analysis: {"total_prs": 0, "merged": 0, "open": 0, "by_category": {}, "notable_prs": [], "themes": [], "skipped": true}
 
 steps:
+  # ==========================================================================
+  # Step 1: Detect repo (Bash - URL parsing + API calls)
+  # ==========================================================================
   - id: "detect-repo"
-    agent: "foundation:modular-builder"
+    agent: "foundation:explorer"
     parse_json: true
     prompt: |
-      Detect the repository to analyze.
+      Detect the repository to analyze using bash commands.
       
-      Provided repo_url: "{{repo_url}}"
+      ## Execute
       
-      If repo_url is empty or blank, detect from current working directory:
-      
-      ```bash
-      # Get the remote URL
-      git remote get-url origin 2>/dev/null || echo ""
-      ```
-      
-      Parse the URL to extract owner and repo name:
-      - https://github.com/owner/repo.git -> owner, repo
-      - git@github.com:owner/repo.git -> owner, repo
-      - https://github.com/owner/repo -> owner, repo
-      
-      Verify gh CLI is available and authenticated:
-      ```bash
-      gh auth status
-      ```
-      
-      Create working directories:
       ```bash
       mkdir -p {{working_dir}}/analyses
+      
+      repo_url="{{repo_url}}"
+      
+      # Detect from git remote if not provided
+      if [ -z "$repo_url" ]; then
+        repo_url=$(git remote get-url origin 2>/dev/null || echo "")
+        detected_from="git_remote"
+      else
+        detected_from="provided"
+      fi
+      
+      # Normalize URL and extract owner/repo
+      # Handle: https://github.com/owner/repo.git, git@github.com:owner/repo.git, https://github.com/owner/repo
+      normalized=$(echo "$repo_url" | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')
+      owner=$(echo "$normalized" | sed 's|https://github.com/||' | cut -d'/' -f1)
+      repo_name=$(echo "$normalized" | sed 's|https://github.com/||' | cut -d'/' -f2)
+      
+      # Check gh CLI
+      if gh auth status >/dev/null 2>&1; then
+        gh_available=true
+      else
+        gh_available=false
+      fi
+      
+      # Validate we got values
+      if [ -z "$owner" ] || [ -z "$repo_name" ]; then
+        echo "{\"error\": \"Could not parse repo URL: $repo_url\", \"gh_available\": $gh_available}"
+      else
+        echo "{\"repo_url\": \"$normalized\", \"owner\": \"$owner\", \"repo_name\": \"$repo_name\", \"detected_from\": \"$detected_from\", \"gh_available\": $gh_available, \"error\": null}"
+      fi
       ```
       
-      Return:
-      {
-        "repo_url": "<normalized https URL>",
-        "owner": "<owner>",
-        "repo_name": "<repo name>",
-        "detected_from": "provided" | "git_remote",
-        "gh_available": true|false,
-        "error": null | "<error message>"
-      }
+      Run the script and return the JSON output.
     output: "repo_info"
     timeout: 120
     on_error: "fail"
@@ -117,32 +124,38 @@ steps:
     output: "parsed_date"
     timeout: 60
 
+  # ==========================================================================
+  # Step 3: Fetch commits (Bash - direct API calls)
+  # ==========================================================================
   - id: "fetch-commits"
-    agent: "foundation:modular-builder"
+    agent: "foundation:explorer"
     parse_json: true
     prompt: |
-      Fetch commits for {{repo_info.owner}}/{{repo_info.repo_name}} since {{parsed_date.since_iso}}.
+      Fetch commits using direct gh API call.
       
-      Use the gh CLI:
+      ## Execute
+      
       ```bash
+      cd {{working_dir}}/analyses
+      
+      # Fetch commits from GitHub API
       gh api "repos/{{repo_info.owner}}/{{repo_info.repo_name}}/commits?since={{parsed_date.since_iso}}&per_page=100" \
-        --jq '.[] | {sha: .sha, message: .commit.message, author: .commit.author.name, date: .commit.author.date, url: .html_url}' 2>/dev/null || echo "[]"
+        --jq '[.[] | {sha: .sha, message: .commit.message, author: .commit.author.name, date: .commit.author.date, url: .html_url}]' \
+        2>/dev/null > {{repo_info.repo_name}}-commits.json || echo "[]" > {{repo_info.repo_name}}-commits.json
+      
+      # Count and format output
+      count=$(jq 'length' {{repo_info.repo_name}}-commits.json 2>/dev/null || echo "0")
+      commits=$(cat {{repo_info.repo_name}}-commits.json)
+      
+      # Check for errors
+      if [ "$count" = "0" ] && [ ! -s {{repo_info.repo_name}}-commits.json ]; then
+        echo "{\"count\": 0, \"commits\": [], \"error\": \"Failed to fetch or no commits found\"}"
+      else
+        echo "{\"count\": $count, \"commits\": $commits, \"error\": null}"
+      fi
       ```
       
-      If there are more than 100 commits, paginate to get all.
-      
-      Handle errors gracefully:
-      - 404: Repo not found or no access -> return empty list with error note
-      - Rate limit: Note in output, return what we got
-      
-      Write commits to: {{working_dir}}/analyses/{{repo_info.repo_name}}-commits.json
-      
-      Return:
-      {
-        "count": N,
-        "commits": [array of commit objects],
-        "error": null or "error message"
-      }
+      Run the script and return the JSON output.
     output: "commits_data"
     timeout: 300
     retry:
@@ -150,38 +163,42 @@ steps:
       backoff: "exponential"
       initial_delay: 5
 
+  # ==========================================================================
+  # Step 4: Fetch PRs (Bash - direct API calls)
+  # ==========================================================================
   - id: "fetch-prs"
-    agent: "foundation:modular-builder"
+    agent: "foundation:explorer"
     parse_json: true
     prompt: |
-      Fetch PRs with activity for {{repo_info.owner}}/{{repo_info.repo_name}} since {{parsed_date.since_date}}.
+      Fetch PRs using direct gh CLI call.
       
-      Use gh CLI to get PRs:
+      ## Execute
+      
       ```bash
-      # Get recently updated PRs (includes created, merged, commented)
+      cd {{working_dir}}/analyses
+      
+      # Fetch PRs from GitHub
       gh pr list --repo {{repo_info.owner}}/{{repo_info.repo_name}} --state all --limit 100 \
-        --json number,title,state,author,createdAt,mergedAt,closedAt,additions,deletions,changedFiles,url 2>/dev/null \
-        | jq '[.[] | select(.createdAt >= "{{parsed_date.since_iso}}" or .mergedAt >= "{{parsed_date.since_iso}}" or .closedAt >= "{{parsed_date.since_iso}}")]' || echo "[]"
+        --json number,title,state,author,createdAt,mergedAt,closedAt,additions,deletions,changedFiles,url \
+        2>/dev/null > {{repo_info.repo_name}}-prs-raw.json || echo "[]" > {{repo_info.repo_name}}-prs-raw.json
+      
+      # Filter to date range and count states
+      since_iso="{{parsed_date.since_iso}}"
+      
+      jq --arg since "$since_iso" '[.[] | select(.createdAt >= $since or .mergedAt >= $since or .closedAt >= $since)]' \
+        {{repo_info.repo_name}}-prs-raw.json > {{repo_info.repo_name}}-prs.json 2>/dev/null || echo "[]" > {{repo_info.repo_name}}-prs.json
+      
+      # Calculate counts
+      count=$(jq 'length' {{repo_info.repo_name}}-prs.json 2>/dev/null || echo "0")
+      merged=$(jq '[.[] | select(.state == "MERGED")] | length' {{repo_info.repo_name}}-prs.json 2>/dev/null || echo "0")
+      open=$(jq '[.[] | select(.state == "OPEN")] | length' {{repo_info.repo_name}}-prs.json 2>/dev/null || echo "0")
+      closed=$(jq '[.[] | select(.state == "CLOSED")] | length' {{repo_info.repo_name}}-prs.json 2>/dev/null || echo "0")
+      prs=$(cat {{repo_info.repo_name}}-prs.json)
+      
+      echo "{\"count\": $count, \"prs\": $prs, \"merged\": $merged, \"open\": $open, \"closed\": $closed, \"error\": null}"
       ```
       
-      For each PR, capture:
-      - number, title, state (open/closed/merged)
-      - author login
-      - created_at, merged_at, closed_at
-      - additions, deletions, changed_files
-      - url
-      
-      Write PRs to: {{working_dir}}/analyses/{{repo_info.repo_name}}-prs.json
-      
-      Return:
-      {
-        "count": N,
-        "prs": [array of PR objects],
-        "merged": N,
-        "open": N,
-        "closed": N,
-        "error": null or "error message"
-      }
+      Run the script and return the JSON output.
     output: "prs_data"
     timeout: 300
     retry:
