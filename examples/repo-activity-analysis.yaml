@@ -124,6 +124,7 @@ steps:
         "description": "human readable description"
       }
     output: "parsed_date"
+    parse_json: true
     timeout: 60
 
   # ==========================================================================
@@ -257,6 +258,7 @@ steps:
         "themes": ["list of patterns/themes observed"]
       }
     output: "commit_analysis"
+    parse_json: true
     timeout: 600
 
   # ==========================================================================
@@ -321,6 +323,7 @@ steps:
         "skipped": false
       }
     output: "deep_dive_results"
+    parse_json: true
     timeout: 600
     on_error: "continue"
 
@@ -384,6 +387,7 @@ steps:
         "themes": ["patterns observed in PRs"]
       }
     output: "pr_analysis"
+    parse_json: true
     timeout: 300
 
   # ==========================================================================
@@ -451,4 +455,5 @@ steps:
       
       Return the summary object.
     output: "repo_summary"
+    parse_json: true
     timeout: 300
