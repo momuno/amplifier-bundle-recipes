@@ -165,13 +165,36 @@ Example:
                 error={"message": str(e), "type": type(e).__name__},
             )
 
+    def _resolve_path(self, path_str: str) -> Path | None:
+        """Resolve a path string, handling @mention syntax.
+
+        Args:
+            path_str: Path string, possibly with @bundle:path syntax
+
+        Returns:
+            Resolved Path, or None if @mention couldn't be resolved
+        """
+        if path_str.startswith("@"):
+            # Get mention resolver from coordinator capabilities
+            mention_resolver = self.coordinator.get_capability("mention_resolver")
+            if mention_resolver is None:
+                return None
+            return mention_resolver.resolve(path_str)
+        return Path(path_str)
+
     async def _execute_recipe(self, input: dict[str, Any]) -> ToolResult:
         """Execute recipe from YAML file."""
         recipe_path_str = input.get("recipe_path")
         if not recipe_path_str:
             return ToolResult(success=False, error={"message": "recipe_path is required for execute operation"})
 
-        recipe_path = Path(recipe_path_str)
+        # Resolve @mention paths (e.g., @recipes:examples/code-review.yaml)
+        recipe_path = self._resolve_path(recipe_path_str)
+        if recipe_path is None:
+            return ToolResult(
+                success=False,
+                error={"message": f"Could not resolve @mention path: {recipe_path_str}"},
+            )
         context_vars = input.get("context", {})
 
         # Determine project path (current working directory)
@@ -331,7 +354,13 @@ Example:
         if not recipe_path_str:
             return ToolResult(success=False, error={"message": "recipe_path is required for validate operation"})
 
-        recipe_path = Path(recipe_path_str)
+        # Resolve @mention paths (e.g., @recipes:examples/code-review.yaml)
+        recipe_path = self._resolve_path(recipe_path_str)
+        if recipe_path is None:
+            return ToolResult(
+                success=False,
+                error={"message": f"Could not resolve @mention path: {recipe_path_str}"},
+            )
 
         try:
             # Load recipe
