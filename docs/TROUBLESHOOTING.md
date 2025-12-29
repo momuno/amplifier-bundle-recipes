@@ -12,6 +12,7 @@ This guide helps you diagnose and fix problems when creating or executing recipe
 - [Agent Problems](#agent-problems)
 - [Performance Issues](#performance-issues)
 - [Variable Problems](#variable-problems)
+- [JSON and Data Format Issues](#json-and-data-format-issues)
 - [Debugging Tips](#debugging-tips)
 
 ---
@@ -651,6 +652,136 @@ Output shows: "Analyze {{file_path}}" instead of "Analyze src/auth.py"
    # To output literal "{{file_path}}"
    prompt: "Template syntax: \\{{variable\\}}"
    ```
+
+---
+
+## JSON and Data Format Issues
+
+### Issue: "Cannot access field on step output"
+
+**Symptom:**
+```
+Error: Variable undefined: {{commits_data.count}}
+# Or output shows literal "{{commits_data.count}}" instead of value
+```
+
+**Cause:** Step output is stored as a string, not parsed JSON. Field access (`.field`) only works on parsed objects.
+
+**Solution:**
+
+Add `parse_json: true` to steps whose output you'll access via field notation:
+
+```yaml
+# ❌ Wrong: bash outputs JSON string, stored as string
+- id: "get-commits"
+  type: "bash"
+  command: "git log --oneline | wc -l | jq '{count: .}'"
+  output: "commits_data"
+
+- id: "use-count"
+  prompt: "There are {{commits_data.count}} commits"  # FAILS: commits_data is a string
+
+# ✅ Correct: parse_json extracts JSON from output
+- id: "get-commits"
+  type: "bash"
+  command: "git log --oneline | wc -l | jq '{count: .}'"
+  output: "commits_data"
+  parse_json: true  # Now commits_data is an object
+
+- id: "use-count"
+  prompt: "There are {{commits_data.count}} commits"  # Works!
+```
+
+**When to use `parse_json: true`:**
+
+| Step Type | Use `parse_json: true` When |
+|-----------|----------------------------|
+| `bash` | Output is JSON you'll access via `{{var.field}}` |
+| `agent` | Agent returns structured data you'll access via `{{var.field}}` |
+
+**When NOT to use it:**
+- Output is prose/markdown you'll pass as-is to another step
+- You only need the raw string value
+
+### Issue: "Bash step produces malformed JSON"
+
+**Symptom:**
+```
+jq: parse error (in bash command output)
+# Or downstream steps fail with JSON parsing errors
+```
+
+**Cause:** Shell variable expansion corrupts JSON when content has quotes, newlines, or special characters.
+
+**Solution:**
+
+Use `jq` to construct JSON safely—never use shell interpolation:
+
+```bash
+# ❌ Wrong: Shell expansion breaks on quotes/newlines
+json_var='{"message": "Hello \"world\""}'
+echo "{\"items\": $json_var}"  # Breaks!
+
+# ✅ Correct: Use jq for safe JSON construction
+echo "$json_var" | jq -c '{items: .}'
+
+# ✅ Correct: Read from file
+jq -c '{items: .}' data.json
+
+# ✅ Correct: Combine multiple values
+jq -n --arg msg "$message" --argjson count "$count" \
+  '{message: $msg, count: $count}'
+```
+
+**Pattern for bash steps producing JSON:**
+
+```yaml
+- id: "gather-data"
+  type: "bash"
+  command: |
+    # Gather data into temp files
+    git log --oneline -5 > /tmp/commits.txt
+    
+    # Use jq to construct JSON safely
+    jq -Rsc 'split("\n") | map(select(. != "")) | {commits: ., count: length}' /tmp/commits.txt
+  output: "git_data"
+  parse_json: true
+```
+
+### Issue: "Agent output not parsing as expected"
+
+**Symptom:**
+```
+# Agent was asked for JSON, but {{result.field}} doesn't work
+# Or result contains prose with JSON embedded in it
+```
+
+**Cause:** Agents return natural language by default. Without `parse_json: true`, the entire response is stored as a string.
+
+**Solution:**
+
+```yaml
+# ❌ Wrong: Agent returns prose, stored as string
+- id: "analyze"
+  agent: "foundation:zen-architect"
+  prompt: "Return JSON with {findings: [...], severity: 'high'|'medium'|'low'}"
+  output: "analysis"
+
+- id: "check"
+  condition: "{{analysis.severity}} == 'high'"  # FAILS: analysis is a string
+
+# ✅ Correct: parse_json extracts JSON from prose response
+- id: "analyze"
+  agent: "foundation:zen-architect"
+  prompt: "Return JSON with {findings: [...], severity: 'high'|'medium'|'low'}"
+  output: "analysis"
+  parse_json: true  # Extracts JSON from agent's response
+
+- id: "check"
+  condition: "{{analysis.severity}} == 'high'"  # Works!
+```
+
+**Tip:** When using `parse_json: true` with agents, be explicit in your prompt about the expected JSON structure.
 
 ---
 
