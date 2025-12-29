@@ -307,6 +307,42 @@ steps:
 - Recursion protection prevents infinite loops
 - DRY principle: reuse tested workflows instead of duplicating steps
 
+### Sub-Recipe Extraction Guidance
+
+When helping users decide whether to extract a sub-recipe, use this framework:
+
+**The Naming Test:**
+> "Can you describe this sub-recipe's purpose in one sentence without referencing the parent?"
+- ✅ "Performs security vulnerability scanning and classification" → Extract it
+- ❌ "Does the middle part of the code review" → Keep inline
+
+**The Testing Test:**
+> "Would you want to run this workflow independently to verify it works?"
+- ✅ Yes, it produces meaningful results alone → Extract it
+- ❌ No, results only make sense in context of parent → Keep inline
+
+**The Reuse Test:**
+> "Can you imagine a second recipe that would call this same workflow?"
+- ✅ Yes, clearly → Extract it
+- ❌ Maybe someday → Keep inline for now, extract when the need materializes
+
+**Extract when you see:**
+- Parent recipe >10 steps and getting hard to read
+- Copy-pasting the same step sequence across recipes
+- Different teams want to own/maintain different parts
+- Natural "chapter boundary" in the workflow
+- Long prompts or bash commands that obscure parent flow
+- Steps that deserve their own testing
+
+**Keep inline when you see:**
+- Single-step "recipes" (overhead exceeds value)
+- Heavy context passing (>5 variables to sub-recipe)
+- Sub-recipe name includes "helper", "util", "prep", or step numbers
+- Would create files smaller than 20 lines of YAML
+- Steps tightly coupled to parent's specific logic
+
+**Reference:** @recipes:docs/BEST_PRACTICES.md#sub-recipe-modularization
+
 ## Example Conversations
 
 ### Example 1: Simple Recipe Creation

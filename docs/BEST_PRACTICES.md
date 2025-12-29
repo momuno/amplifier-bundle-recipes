@@ -129,6 +129,117 @@ steps:
 
 ---
 
+## Sub-Recipe Modularization
+
+Sub-recipes follow the "bricks and studs" philosophy: small, self-contained workflows with clear interfaces that snap together cleanly.
+
+### The Core Question
+
+> **"Would I name, test, and version this workflow independently?"**
+>
+> If yes → extract to a sub-recipe. If no → keep inline.
+
+### When to Extract
+
+**Extract a sub-recipe when:**
+
+| Signal | Why It Matters |
+|--------|----------------|
+| **Clear independent purpose** | "security-audit" vs "step-2-prep" - if you can name it without referencing the parent, extract it |
+| **Testable in isolation** | You want to verify this workflow works on its own |
+| **Reused across recipes** | Multiple parent recipes call the same workflow |
+| **Natural checkpoint** | Results are useful even if later steps fail |
+| **Context boundary needed** | Parent has sensitive data the sub-workflow shouldn't see |
+| **Cognitive load** | Parent recipe exceeds ~10 steps and becomes hard to reason about |
+| **Different ownership** | Different teams maintain different parts |
+
+**Keep steps inline when:**
+
+| Signal | Why It Matters |
+|--------|----------------|
+| **Tightly coupled** | Steps are meaningless alone |
+| **Single caller** | Only one recipe would ever use this |
+| **Thin wrapper** | Would just pass through to another call |
+| **Heavy context sharing** | Many variables flowing between steps |
+| **Implementation detail** | "prepare-context-for-synthesis" isn't a workflow |
+
+### Anti-Patterns
+
+**Premature Extraction:**
+```yaml
+# ❌ Bad: Extracted before proving reuse
+- type: "recipe"
+  recipe: "analyze-structure.yaml"  # Only used here, one step inside
+
+# ✅ Good: Keep inline until you have 2+ callers
+- id: "analyze-structure"
+  agent: "foundation:zen-architect"
+  prompt: "Analyze {{file_path}}"
+```
+
+**Fragmentation:**
+```yaml
+# ❌ Bad: Natural flow split artificially
+steps:
+  - type: "recipe"
+    recipe: "step1-scan.yaml"
+  - type: "recipe"
+    recipe: "step2-classify.yaml"
+  - type: "recipe"
+    recipe: "step3-report.yaml"
+
+# ✅ Good: Keep cohesive workflows together
+steps:
+  - id: "scan"
+    ...
+  - id: "classify"
+    ...
+  - id: "report"
+    ...
+```
+
+**Single-Step Sub-Recipes:**
+```yaml
+# ❌ Bad: Recipe overhead for one step
+# validate-input.yaml contains just one agent call
+
+# ✅ Good: Extract when there's actual workflow
+# security-audit.yaml contains: scan → classify → prioritize → report
+```
+
+### Validation at Boundaries
+
+When composing sub-recipes, validate at the seams:
+
+```yaml
+# ✅ Good: Validate outputs before passing to next sub-recipe
+steps:
+  - type: "recipe"
+    recipe: "build-artifact.yaml"
+    output: "build_result"
+
+  - id: "validate-build"
+    agent: "recipes:result-validator"
+    prompt: "Verify build output is valid before deployment"
+    output: "validation"
+
+  - type: "recipe"
+    recipe: "deploy-artifact.yaml"
+    context:
+      artifact: "{{build_result}}"
+    condition: "{{validation.passed}}"
+```
+
+### Good Composition Example
+
+See `examples/comprehensive-review.yaml` for a well-structured composition:
+- Parent orchestrates high-level flow
+- Sub-recipes (`code-review-recipe.yaml`, `security-audit-recipe.yaml`) are independently testable
+- Clear context boundaries (only pass what sub-recipes need)
+- Synthesis step combines results
+
+---
+
 ## Recipe Structure
 
 ### Naming Conventions

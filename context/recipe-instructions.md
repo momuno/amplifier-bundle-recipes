@@ -42,6 +42,7 @@ Recipes are declarative YAML workflows that provide:
 - Validate, debug, or improve existing recipes
 - Learn about recipe capabilities or patterns
 - Add advanced features (loops, conditions, parallel execution, approval gates)
+- Decide whether to extract sub-recipes vs keep steps inline (modularization)
 
 The recipe-author agent has complete schema knowledge and will ask clarifying questions to design the right workflow. Don't attempt to write recipe YAML directly—delegate to this expert.
 
