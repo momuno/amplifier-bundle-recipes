@@ -1,51 +1,51 @@
-# Recipe System Instructions
+# Recipe System
 
 You have access to the **recipes** tool for multi-step AI agent orchestration.
+
+## What Recipes Solve
+
+Recipes are declarative YAML workflows that provide:
+- **Orchestration** - Coordinate multiple agents in sequence or parallel
+- **Resumability** - Automatic checkpointing; resume if interrupted
+- **Approval Gates** - Pause for human review at critical checkpoints
+- **Context Flow** - Results from each step available to subsequent steps
 
 ## When to Use Recipes
 
 **Use recipes when:**
-- Tasks have multiple sequential or parallel steps that benefit from structured orchestration
-- Human approval gates are needed at specific checkpoints
-- Context must accumulate and flow across agent handoffs
-- Workflows need to be resumable after interruption
-- You want declarative, repeatable workflow definitions
+- Tasks have multiple sequential steps requiring different agents
+- The workflow will be repeated (worth encoding as reusable YAML)
+- Human approval checkpoints are needed between phases
+- Work might be interrupted and needs resumption
+- Context must accumulate across agent handoffs
 
-**Direct agent delegation is better when:**
+**Use direct agent delegation when:**
 - Tasks are single-step or simple
 - Real-time interactive iteration is needed
-- The workflow is ad-hoc and won't be repeated
-- You need maximum flexibility in response to results
+- The workflow is exploratory or ad-hoc
 
-## Quick Reference
+## Tool Operations
 
-| Operation | Description |
-|-----------|-------------|
-| `execute` | Run a recipe from a YAML file |
-| `resume` | Continue a paused or interrupted recipe |
-| `list` | Show recipe sessions and their status |
+| Operation | Use For |
+|-----------|---------|
+| `execute` | Run a recipe from YAML file |
+| `resume` | Continue an interrupted session |
 | `validate` | Check recipe YAML before execution |
+| `list` | Show active sessions |
 | `approvals` | Show pending approval gates |
-| `approve` | Approve a pending gate to continue |
-| `deny` | Deny a pending gate to stop execution |
+| `approve/deny` | Respond to approval gates |
 
-## Key Features
+## Getting Help
 
-- **Context Accumulation**: Each step's output is available to subsequent steps via `{{variable}}` syntax
-- **Approval Gates**: Pause execution for human review with `requires_approval: true`
-- **Resumability**: Sessions are checkpointed after each step for recovery
-- **Foreach Loops**: Iterate over collections with `foreach:` syntax
-- **Conditional Execution**: Branch based on results with `condition:` expressions
-- **JSON Parsing Control**: Use `parse_json: true` on steps to extract structured data from agent prose
+**Delegate to `recipes:recipe-author`** when users need to:
+- Create new recipes (conversational workflow design)
+- Validate, debug, or improve existing recipes
+- Learn about recipe capabilities or patterns
+- Add advanced features (loops, conditions, parallel execution, approval gates)
 
-## Specialized Agents
+The recipe-author agent has complete schema knowledge and will ask clarifying questions to design the right workflow. Don't attempt to write recipe YAML directly—delegate to this expert.
 
-- **recipes:recipe-author** - Conversational assistance for creating and validating recipes
-- **recipes:result-validator** - Objective pass/fail assessment of step outcomes
-
-## Documentation
-
-- Schema: @recipes:docs/RECIPE_SCHEMA.md
-- Best practices: @recipes:docs/BEST_PRACTICES.md
-- Examples catalog: @recipes:docs/EXAMPLES_CATALOG.md
-- Troubleshooting: @recipes:docs/TROUBLESHOOTING.md
+**Use `recipes:result-validator`** for:
+- Objective pass/fail assessment of step outcomes or workflow results
+- Systematic evaluation against criteria or rubrics
+- Formal verdicts needed for automation decisions or approval gates
