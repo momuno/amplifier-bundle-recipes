@@ -1,0 +1,441 @@
+name: "repo-activity-analysis"
+description: "Analyze a GitHub repository for commits and PRs in a date range. Defaults to current repo since yesterday."
+version: "1.0.0"
+author: "Amplifier Recipes"
+tags: ["github", "analysis", "commits", "prs", "git", "activity"]
+
+# Repository Activity Analysis Recipe
+#
+# Analyzes a single GitHub repository for commits and PRs in a date range.
+# Defaults to the current working directory's repo and "since yesterday".
+#
+# Usage (defaults - analyze current repo since yesterday):
+#   amplifier recipes execute repo-activity-analysis.yaml
+#
+# Usage (explicit repo):
+#   amplifier recipes execute repo-activity-analysis.yaml --context '{
+#     "repo_url": "https://github.com/microsoft/amplifier-core"
+#   }'
+#
+# Usage (custom date range):
+#   amplifier recipes execute repo-activity-analysis.yaml --context '{
+#     "date_range": "last 7 days"
+#   }'
+#
+# Requirements:
+#   - gh CLI installed and authenticated
+#   - Git (for detecting current repo if using defaults)
+
+context:
+  # Repository URL - leave empty to detect from current working directory
+  repo_url: ""
+  
+  # Date range (natural language) - defaults to yesterday
+  date_range: "since yesterday"
+  
+  # Working directory for intermediate files
+  working_dir: "./ai_working"
+  
+  # Include deep-dive analysis for unclear changes
+  include_deep_dive: true
+  
+  # Default values for conditional step outputs (prevents undefined variable errors)
+  # These are overwritten when the steps run, but provide safe defaults if skipped
+  commit_analysis: {"total_analyzed": 0, "by_impact": {}, "summaries": [], "needs_deep_dive": [], "themes": [], "skipped": true}
+  deep_dive_results: {"deep_dives": [], "skipped": true}
+  pr_analysis: {"total_prs": 0, "merged": 0, "open": 0, "by_category": {}, "notable_prs": [], "themes": [], "skipped": true}
+
+steps:
+  - id: "detect-repo"
+    agent: "foundation:modular-builder"
+    parse_json: true
+    prompt: |
+      Detect the repository to analyze.
+      
+      Provided repo_url: "{{repo_url}}"
+      
+      If repo_url is empty or blank, detect from current working directory:
+      
+      ```bash
+      # Get the remote URL
+      git remote get-url origin 2>/dev/null || echo ""
+      ```
+      
+      Parse the URL to extract owner and repo name:
+      - https://github.com/owner/repo.git -> owner, repo
+      - git@github.com:owner/repo.git -> owner, repo
+      - https://github.com/owner/repo -> owner, repo
+      
+      Verify gh CLI is available and authenticated:
+      ```bash
+      gh auth status
+      ```
+      
+      Create working directories:
+      ```bash
+      mkdir -p {{working_dir}}/analyses
+      ```
+      
+      Return:
+      {
+        "repo_url": "<normalized https URL>",
+        "owner": "<owner>",
+        "repo_name": "<repo name>",
+        "detected_from": "provided" | "git_remote",
+        "gh_available": true|false,
+        "error": null | "<error message>"
+      }
+    output: "repo_info"
+    timeout: 120
+    on_error: "fail"
+
+  - id: "parse-date-range"
+    agent: "foundation:zen-architect"
+    mode: "ANALYZE"
+    parse_json: true
+    prompt: |
+      Parse the natural language date range into ISO 8601 format for GitHub API.
+      
+      Input: "{{date_range}}"
+      Current date: Run `date +%Y-%m-%d` to get today's date.
+      
+      Interpretation:
+      - "since yesterday" -> yesterday at 00:00:00
+      - "last 7 days" -> 7 days ago at 00:00:00
+      - "last week" -> 7 days ago
+      - "since 2024-12-01" -> 2024-12-01T00:00:00Z
+      - "this month" -> first day of current month
+      - "last 3 days" -> 3 days ago
+      
+      Return:
+      {
+        "original": "{{date_range}}",
+        "since_iso": "YYYY-MM-DDTHH:MM:SSZ",
+        "since_date": "YYYY-MM-DD",
+        "description": "human readable description"
+      }
+    output: "parsed_date"
+    timeout: 60
+
+  - id: "fetch-commits"
+    agent: "foundation:modular-builder"
+    parse_json: true
+    prompt: |
+      Fetch commits for {{repo_info.owner}}/{{repo_info.repo_name}} since {{parsed_date.since_iso}}.
+      
+      Use the gh CLI:
+      ```bash
+      gh api "repos/{{repo_info.owner}}/{{repo_info.repo_name}}/commits?since={{parsed_date.since_iso}}&per_page=100" \
+        --jq '.[] | {sha: .sha, message: .commit.message, author: .commit.author.name, date: .commit.author.date, url: .html_url}' 2>/dev/null || echo "[]"
+      ```
+      
+      If there are more than 100 commits, paginate to get all.
+      
+      Handle errors gracefully:
+      - 404: Repo not found or no access -> return empty list with error note
+      - Rate limit: Note in output, return what we got
+      
+      Write commits to: {{working_dir}}/analyses/{{repo_info.repo_name}}-commits.json
+      
+      Return:
+      {
+        "count": N,
+        "commits": [array of commit objects],
+        "error": null or "error message"
+      }
+    output: "commits_data"
+    timeout: 300
+    retry:
+      max_attempts: 3
+      backoff: "exponential"
+      initial_delay: 5
+
+  - id: "fetch-prs"
+    agent: "foundation:modular-builder"
+    parse_json: true
+    prompt: |
+      Fetch PRs with activity for {{repo_info.owner}}/{{repo_info.repo_name}} since {{parsed_date.since_date}}.
+      
+      Use gh CLI to get PRs:
+      ```bash
+      # Get recently updated PRs (includes created, merged, commented)
+      gh pr list --repo {{repo_info.owner}}/{{repo_info.repo_name}} --state all --limit 100 \
+        --json number,title,state,author,createdAt,mergedAt,closedAt,additions,deletions,changedFiles,url 2>/dev/null \
+        | jq '[.[] | select(.createdAt >= "{{parsed_date.since_iso}}" or .mergedAt >= "{{parsed_date.since_iso}}" or .closedAt >= "{{parsed_date.since_iso}}")]' || echo "[]"
+      ```
+      
+      For each PR, capture:
+      - number, title, state (open/closed/merged)
+      - author login
+      - created_at, merged_at, closed_at
+      - additions, deletions, changed_files
+      - url
+      
+      Write PRs to: {{working_dir}}/analyses/{{repo_info.repo_name}}-prs.json
+      
+      Return:
+      {
+        "count": N,
+        "prs": [array of PR objects],
+        "merged": N,
+        "open": N,
+        "closed": N,
+        "error": null or "error message"
+      }
+    output: "prs_data"
+    timeout: 300
+    retry:
+      max_attempts: 3
+      backoff: "exponential"
+      initial_delay: 5
+
+  - id: "analyze-commits"
+    agent: "foundation:zen-architect"
+    mode: "ANALYZE"
+    parse_json: true
+    prompt: |
+      Analyze the commits for {{repo_info.repo_name}}.
+      
+      Commits count: {{commits_data.count}}
+      Commits: {{commits_data.commits}}
+      
+      **If commits count is 0 or commits list is empty, return immediately:**
+      ```json
+      {
+        "total_analyzed": 0,
+        "by_impact": {"trivial": 0, "minor": 0, "moderate": 0, "significant": 0, "breaking": 0},
+        "summaries": [],
+        "needs_deep_dive": [],
+        "themes": [],
+        "skipped": true,
+        "reason": "No commits in date range"
+      }
+      ```
+      
+      **Otherwise, for each commit:**
+      
+      For each commit (or batch if many):
+      
+      1. Fetch the diff using gh CLI:
+      ```bash
+      gh api "repos/{{repo_info.owner}}/{{repo_info.repo_name}}/commits/<SHA>" \
+        --jq '{files: [.files[] | {filename, status, additions, deletions}], stats: .stats}'
+      ```
+      
+      2. Analyze:
+         - What changed (files, patterns)
+         - Why (infer from commit message)
+         - Impact level: trivial | minor | moderate | significant | breaking
+         - Flag if needs_deep_dive (impact unclear from message + diff alone)
+      
+      For large numbers of commits (>20):
+      - Group by author or by area (docs, src, tests)
+      - Summarize patterns rather than individual commits
+      - Still flag any that seem significant
+      
+      Return:
+      {
+        "total_analyzed": N,
+        "by_impact": {
+          "trivial": N,
+          "minor": N,
+          "moderate": N,
+          "significant": N,
+          "breaking": N
+        },
+        "summaries": [
+          {
+            "sha": "...",
+            "summary": "...",
+            "impact": "...",
+            "needs_deep_dive": true|false,
+            "files_changed": [...]
+          }
+        ],
+        "needs_deep_dive": [list of SHAs needing deeper analysis],
+        "themes": ["list of patterns/themes observed"]
+      }
+    output: "commit_analysis"
+    timeout: 600
+
+  - id: "deep-dive-unclear-commits"
+    agent: "foundation:explorer"
+    parse_json: true
+    prompt: |
+      Deep-dive analysis for commits with unclear impact in {{repo_info.repo_name}}.
+      
+      ## Inputs
+      
+      Include deep dive: {{include_deep_dive}}
+      Commits needing analysis: {{commit_analysis.needs_deep_dive}}
+      
+      ## Logic
+      
+      **If include_deep_dive is false OR the needs_deep_dive list is empty:**
+      Return immediately with:
+      ```json
+      {"deep_dives": [], "skipped": true, "reason": "No deep dive needed or disabled"}
+      ```
+      
+      **Otherwise, for each commit SHA in needs_deep_dive:**
+      
+      1. If repo not cloned locally, clone it:
+      ```bash
+      gh repo clone {{repo_info.owner}}/{{repo_info.repo_name}} {{working_dir}}/repos/{{repo_info.repo_name}} -- --depth=50
+      ```
+      
+      2. Checkout the commit and explore:
+      ```bash
+      cd {{working_dir}}/repos/{{repo_info.repo_name}}
+      git show <SHA> --stat
+      git show <SHA> -- <key files>
+      ```
+      
+      3. For changed functions/classes, find:
+         - What depends on them (grep for imports/usages)
+         - Related tests (what behavior is expected)
+         - Documentation (what's the intended purpose)
+      
+      4. Assess actual impact:
+         - Is this a breaking change?
+         - What's the blast radius?
+         - Are there downstream consumers affected?
+      
+      Return enhanced analysis:
+      {
+        "deep_dives": [
+          {
+            "sha": "...",
+            "original_assessment": "...",
+            "revised_impact": "...",
+            "dependencies_found": [...],
+            "risk_assessment": "...",
+            "notes": "..."
+          }
+        ],
+        "skipped": false
+      }
+    output: "deep_dive_results"
+    timeout: 600
+    on_error: "continue"
+
+  - id: "analyze-prs"
+    agent: "foundation:zen-architect"
+    mode: "ANALYZE"
+    parse_json: true
+    prompt: |
+      Analyze the PRs for {{repo_info.repo_name}}.
+      
+      PRs count: {{prs_data.count}}
+      PRs: {{prs_data.prs}}
+      
+      **If PRs count is 0 or PRs list is empty, return immediately:**
+      ```json
+      {
+        "total_prs": 0,
+        "merged": 0,
+        "open": 0,
+        "by_category": {},
+        "notable_prs": [],
+        "themes": [],
+        "skipped": true,
+        "reason": "No PRs in date range"
+      }
+      ```
+      
+      **Otherwise, for each PR:**
+      
+      For each PR:
+      1. Categorize: feature | bugfix | docs | refactor | dependencies | other
+      2. Assess scope: small (<50 lines) | medium (50-200) | large (>200)
+      3. Note if merged, still open, or closed without merge
+      
+      Identify:
+      - Major features added
+      - Significant bug fixes
+      - Breaking changes
+      - PRs that might need attention (stale, contentious, large)
+      
+      Return:
+      {
+        "total_prs": N,
+        "merged": N,
+        "open": N,
+        "by_category": { "feature": N, "bugfix": N, ... },
+        "notable_prs": [
+          {
+            "number": N,
+            "title": "...",
+            "category": "...",
+            "scope": "...",
+            "summary": "...",
+            "notable_because": "..."
+          }
+        ],
+        "themes": ["patterns observed in PRs"]
+      }
+    output: "pr_analysis"
+    timeout: 300
+
+  - id: "synthesize-repo-findings"
+    agent: "foundation:zen-architect"
+    mode: "ARCHITECT"
+    parse_json: true
+    prompt: |
+      Synthesize all findings for {{repo_info.repo_name}}.
+      
+      Inputs:
+      - Repo info: {{repo_info}}
+      - Commits: {{commit_analysis}}
+      - Deep dives: {{deep_dive_results}}
+      - PRs: {{pr_analysis}}
+      - Date range: {{date_range}} ({{parsed_date.description}})
+      
+      Create a comprehensive repo summary:
+      
+      {
+        "repo": "{{repo_info.repo_name}}",
+        "owner": "{{repo_info.owner}}",
+        "url": "{{repo_info.repo_url}}",
+        "analysis_date": "<current timestamp>",
+        "date_range": "{{parsed_date.description}}",
+        
+        "activity_summary": {
+          "has_activity": true|false,
+          "commits": N,
+          "prs_total": N,
+          "prs_merged": N,
+          "prs_open": N
+        },
+        
+        "impact_assessment": {
+          "overall": "none|trivial|minor|moderate|significant|breaking",
+          "by_level": { "trivial": N, ... }
+        },
+        
+        "key_changes": [
+          {
+            "description": "...",
+            "impact": "...",
+            "type": "commit|pr",
+            "references": ["sha or PR#"]
+          }
+        ],
+        
+        "themes": ["patterns and themes observed"],
+        
+        "risks": ["any risks or concerns identified"],
+        
+        "notable_items": [
+          "breaking changes, security items, major features"
+        ]
+      }
+      
+      Write to: {{working_dir}}/analyses/{{repo_info.repo_name}}-analysis.json
+      
+      Also generate a brief markdown summary and write to:
+      {{working_dir}}/analyses/{{repo_info.repo_name}}-summary.md
+      
+      Return the summary object.
+    output: "repo_summary"
+    timeout: 300
