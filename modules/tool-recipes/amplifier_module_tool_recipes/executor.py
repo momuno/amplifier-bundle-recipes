@@ -112,6 +112,18 @@ class RecipeExecutor:
         self.coordinator = coordinator
         self.session_manager = session_manager
 
+    def _show_progress(self, message: str, level: str = "info") -> None:
+        """
+        Show progress message to user via display system.
+
+        Args:
+            message: Progress message to display
+            level: Message level (info, warning, error)
+        """
+        display_system = getattr(self.coordinator, "display_system", None)
+        if display_system is not None:
+            display_system.show_message(message=message, level=level, source="recipe")
+
     async def execute_recipe(
         self,
         recipe: Recipe,
@@ -201,6 +213,10 @@ class RecipeExecutor:
             completed_steps = []
             session_started = datetime.datetime.now().isoformat()
 
+        # Show recipe start progress
+        total_steps = len(recipe.steps)
+        self._show_progress(f"📋 Starting recipe: {recipe.name} ({total_steps} steps)")
+
         # Add metadata to context
         context["recipe"] = {
             "name": recipe.name,
@@ -224,6 +240,11 @@ class RecipeExecutor:
 
                 # Add step metadata to context
                 context["step"] = {"id": step.id, "index": i}
+
+                # Show step progress
+                step_num = i + 1
+                step_type = step.type or "agent"
+                self._show_progress(f"  [{step_num}/{total_steps}] {step.id} ({step_type})")
 
                 # Check condition if present
                 if step.condition:
@@ -315,6 +336,9 @@ class RecipeExecutor:
         # Cleanup old sessions
         self.session_manager.cleanup_old_sessions(project_path)
 
+        # Show completion
+        self._show_progress(f"✅ Recipe completed: {recipe.name}")
+
         return context
 
     async def _execute_staged_recipe(
@@ -386,8 +410,12 @@ class RecipeExecutor:
 
         try:
             # Execute stages
+            total_stages = len(recipe.stages)
             for stage_idx in range(current_stage_index, len(recipe.stages)):
                 stage = recipe.stages[stage_idx]
+
+                # Show stage progress
+                self._show_progress(f"📦 Stage {stage_idx + 1}/{total_stages}: {stage.name}")
 
                 # Add stage metadata to context
                 context["stage"] = {
@@ -527,6 +555,9 @@ class RecipeExecutor:
 
         # Cleanup old sessions
         self.session_manager.cleanup_old_sessions(project_path)
+
+        # Show completion
+        self._show_progress(f"✅ Recipe completed: {recipe.name}")
 
         return context
 
