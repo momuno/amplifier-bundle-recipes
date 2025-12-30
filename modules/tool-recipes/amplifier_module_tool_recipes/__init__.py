@@ -174,33 +174,12 @@ Example:
         Returns:
             Resolved Path, or None if @mention couldn't be resolved
         """
-        import sys
         if path_str.startswith("@"):
             # Get mention resolver from coordinator capabilities
             mention_resolver = self.coordinator.get_capability("mention_resolver")
             if mention_resolver is None:
-                print(f"[DEBUG] mention_resolver capability NOT AVAILABLE for {path_str}", file=sys.stderr)
-                caps = list(self.coordinator._capabilities.keys()) if hasattr(self.coordinator, '_capabilities') else 'unknown'
-                print(f"[DEBUG] Available capabilities: {caps}", file=sys.stderr)
                 return None
-            # Debug: check what type of resolver we have
-            print(f"[DEBUG recipes] coordinator id: {id(self.coordinator)}", file=sys.stderr)
-            print(f"[DEBUG recipes] mention_resolver type: {type(mention_resolver).__name__}", file=sys.stderr)
-            print(f"[DEBUG recipes] mention_resolver id: {id(mention_resolver)}", file=sys.stderr)
-            # Check all capabilities
-            caps = list(self.coordinator._capabilities.keys()) if hasattr(self.coordinator, '_capabilities') else []
-            print(f"[DEBUG recipes] all capabilities: {caps}", file=sys.stderr)
-            if hasattr(mention_resolver, 'foundation_resolver'):
-                print(f"[DEBUG recipes] foundation_resolver: {mention_resolver.foundation_resolver}", file=sys.stderr)
-                print(f"[DEBUG recipes] foundation_resolver is not None: {mention_resolver.foundation_resolver is not None}", file=sys.stderr)
-                if mention_resolver.foundation_resolver and hasattr(mention_resolver.foundation_resolver, 'bundles'):
-                    print(f"[DEBUG recipes] foundation bundles: {list(mention_resolver.foundation_resolver.bundles.keys())}", file=sys.stderr)
-            result = mention_resolver.resolve(path_str)
-            if result is None:
-                print(f"[DEBUG] mention_resolver returned None for {path_str}", file=sys.stderr)
-            else:
-                print(f"[DEBUG] resolved {path_str} -> {result}", file=sys.stderr)
-            return result
+            return mention_resolver.resolve(path_str)
         return Path(path_str)
 
     async def _execute_recipe(self, input: dict[str, Any]) -> ToolResult:
