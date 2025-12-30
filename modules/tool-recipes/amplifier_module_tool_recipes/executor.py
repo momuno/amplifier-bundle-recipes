@@ -1055,11 +1055,8 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         sub_context: dict[str, Any] = {}
         if step.step_context:
             for key, value in step.step_context.items():
-                if isinstance(value, str):
-                    # Substitute variables in string values
-                    sub_context[key] = self.substitute_variables(value, context)
-                else:
-                    sub_context[key] = value
+                # Recursively substitute variables in all values (strings, dicts, lists)
+                sub_context[key] = self._substitute_variables_recursive(value, context)
 
         # Create child recursion state (with step-level override if present)
         child_state = recursion_state.enter_recipe(sub_recipe.name, step.recursion)
@@ -1107,6 +1104,33 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
             else:
                 raise ValueError(f"Undefined variable in foreach: {foreach}")
         return value
+
+    def _substitute_variables_recursive(self, value: Any, context: dict[str, Any]) -> Any:
+        """
+        Recursively substitute {{variable}} references in nested structures.
+
+        Handles:
+        - Strings: Direct variable substitution
+        - Dicts: Recursively process all values
+        - Lists: Recursively process all items
+        - Other types: Pass through unchanged
+
+        Args:
+            value: Value to process (string, dict, list, or other)
+            context: Dict with variable values
+
+        Returns:
+            Value with all variables substituted
+        """
+        if isinstance(value, str):
+            return self.substitute_variables(value, context)
+        elif isinstance(value, dict):
+            return {k: self._substitute_variables_recursive(v, context) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [self._substitute_variables_recursive(item, context) for item in value]
+        else:
+            # Numbers, booleans, None, etc. - pass through unchanged
+            return value
 
     def substitute_variables(self, template: str, context: dict[str, Any]) -> str:
         """
