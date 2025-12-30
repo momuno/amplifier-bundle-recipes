@@ -184,11 +184,13 @@ Example:
                 print(f"[DEBUG] Available capabilities: {caps}", file=sys.stderr)
                 return None
             # Debug: check what type of resolver we have
-            print(f"[DEBUG] mention_resolver type: {type(mention_resolver).__name__}", file=sys.stderr)
+            print(f"[DEBUG recipes] mention_resolver type: {type(mention_resolver).__name__}", file=sys.stderr)
+            print(f"[DEBUG recipes] mention_resolver id: {id(mention_resolver)}", file=sys.stderr)
             if hasattr(mention_resolver, 'foundation_resolver'):
-                print(f"[DEBUG] has foundation_resolver: {mention_resolver.foundation_resolver is not None}", file=sys.stderr)
+                print(f"[DEBUG recipes] foundation_resolver: {mention_resolver.foundation_resolver}", file=sys.stderr)
+                print(f"[DEBUG recipes] foundation_resolver is not None: {mention_resolver.foundation_resolver is not None}", file=sys.stderr)
                 if mention_resolver.foundation_resolver and hasattr(mention_resolver.foundation_resolver, 'bundles'):
-                    print(f"[DEBUG] foundation bundles: {list(mention_resolver.foundation_resolver.bundles.keys())}", file=sys.stderr)
+                    print(f"[DEBUG recipes] foundation bundles: {list(mention_resolver.foundation_resolver.bundles.keys())}", file=sys.stderr)
             result = mention_resolver.resolve(path_str)
             if result is None:
                 print(f"[DEBUG] mention_resolver returned None for {path_str}", file=sys.stderr)
