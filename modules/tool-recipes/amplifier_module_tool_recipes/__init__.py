@@ -178,8 +178,13 @@ Example:
             # Get mention resolver from coordinator capabilities
             mention_resolver = self.coordinator.get_capability("mention_resolver")
             if mention_resolver is None:
+                logger.warning(f"mention_resolver capability not available for resolving {path_str}")
+                logger.debug(f"Available capabilities: {list(self.coordinator._capabilities.keys()) if hasattr(self.coordinator, '_capabilities') else 'unknown'}")
                 return None
-            return mention_resolver.resolve(path_str)
+            result = mention_resolver.resolve(path_str)
+            if result is None:
+                logger.warning(f"mention_resolver returned None for {path_str}")
+            return result
         return Path(path_str)
 
     async def _execute_recipe(self, input: dict[str, Any]) -> ToolResult:
