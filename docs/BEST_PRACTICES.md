@@ -687,6 +687,80 @@ steps:
   # Uses small summary instead of large document
 ```
 
+### Precomputed Values Pattern
+
+**Eliminate redundant LLM calls in sub-recipes:**
+
+When a parent recipe calls sub-recipes in a loop, avoid re-computing the same values:
+
+```yaml
+# Parent recipe - compute once, pass to all sub-recipes
+context:
+  _precomputed:
+    date_since_iso: "{{parsed_date.iso_since}}"  # Computed once in parent
+    repo_owner: "{{repo.owner}}"                  # Already known
+
+steps:
+  - id: "analyze-repos"
+    foreach: "{{repos}}"
+    type: "recipe"
+    recipe: "sub-recipe.yaml"
+    context:
+      _precomputed: "{{_precomputed}}"  # Pass precomputed values
+```
+
+```yaml
+# Sub-recipe - skip expensive step if precomputed available
+- id: "parse-date"
+  condition: "{{_precomputed.date_since_iso}} == ''"  # Only if not provided
+  agent: "foundation:zen-architect"
+  prompt: "Parse date..."
+```
+
+**Impact:** 12 sub-recipes × 1 LLM call = 12 calls → 0 calls (use parent's result).
+
+### Bash vs Agent Decision
+
+**Use bash when:**
+- Output format is fixed/deterministic
+- No semantic judgment needed
+- Speed matters (bash: <1s, agent: 5-15s)
+
+**Use agent when:**
+- Adaptive tone/messaging needed
+- Complex reasoning required
+- Output varies based on context
+
+```yaml
+# ✅ Bash: Fixed format summary (fast, deterministic)
+- id: "show-summary"
+  type: "bash"
+  command: |
+    echo "Repos: {{count}} | Commits: {{commits}}"
+
+# ✅ Agent: Requires judgment (slower, adaptive)
+- id: "synthesize-report"
+  agent: "foundation:zen-architect"
+  prompt: "Create narrative from findings..."
+```
+
+### Parallel Execution
+
+**Enable parallel for independent iterations:**
+
+```yaml
+- id: "analyze-each"
+  foreach: "{{items}}"
+  parallel: true  # ~4x faster for 12 items
+  type: "recipe"
+  recipe: "analysis.yaml"
+```
+
+**Considerations:**
+- Check API rate limits before enabling
+- Use `parallel: "{{parallel_mode}}"` for user control
+- Default to `true` unless rate-limiting is a concern
+
 ---
 
 ## Testing

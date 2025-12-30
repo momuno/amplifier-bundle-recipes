@@ -1,6 +1,6 @@
 name: "repo-activity-analysis"
 description: "Analyze a GitHub repository for commits and PRs in a date range. Defaults to current repo since yesterday."
-version: "1.1.0"
+version: "1.2.0"
 author: "Amplifier Recipes"
 tags: ["github", "analysis", "commits", "prs", "git", "activity"]
 
@@ -8,6 +8,11 @@ tags: ["github", "analysis", "commits", "prs", "git", "activity"]
 #
 # Analyzes a single GitHub repository for commits and PRs in a date range.
 # Defaults to the current working directory's repo and "since yesterday".
+#
+# v1.2.0: Added _precomputed values pattern for orchestration optimization
+#         - Skips date parsing LLM call when parent provides parsed values
+#         - Skips URL parsing when parent provides owner/name
+#         - Maintains full standalone functionality
 #
 # v1.1.0: Converted bash-heavy steps to type: "bash" for efficiency
 #         (no LLM overhead for deterministic shell commands)
@@ -42,18 +47,27 @@ context:
   # Include deep-dive analysis for unclear changes
   include_deep_dive: true
   
+  # === Optional precomputed values (for orchestration optimization) ===
+  # When called from a parent recipe, these skip expensive re-computation.
+  # Leave empty/default for standalone execution (recipe computes them).
+  _precomputed:
+    date_since_iso: ""      # e.g., "2024-12-28T00:00:00Z" - skips LLM date parsing
+    date_since_date: ""     # e.g., "2024-12-28"
+    date_description: ""    # e.g., "since yesterday (2024-12-28 to now)"
+    repo_owner: ""          # e.g., "microsoft" - skips URL parsing
+    repo_name: ""           # e.g., "amplifier-core"
+  
   # Default values for conditional step outputs (prevents undefined variable errors)
-  # These are overwritten when the steps run, but provide safe defaults if skipped
   commit_analysis: {"total_analyzed": 0, "by_impact": {}, "summaries": [], "needs_deep_dive": [], "themes": [], "skipped": true}
   deep_dive_results: {"deep_dives": [], "skipped": true}
   pr_analysis: {"total_prs": 0, "merged": 0, "open": 0, "by_category": {}, "notable_prs": [], "themes": [], "skipped": true}
 
 steps:
   # ==========================================================================
-  # Step 1: Detect repo (Bash - URL parsing + API calls)
+  # Step 1: Detect repo (Bash - uses precomputed or parses URL)
   # ==========================================================================
-  # BASH STEP - Parse URLs and check gh CLI authentication
-  # Why bash: URL normalization with sed, gh auth check are deterministic
+  # BASH STEP - Use precomputed owner/name if available, else parse URL
+  # Optimization: Parent recipes can pass _precomputed.repo_owner/name to skip parsing
   - id: "detect-repo"
     type: "bash"
     command: |
@@ -61,9 +75,18 @@ steps:
       
       mkdir -p {{working_dir}}/analyses
       
+      # Check for precomputed values first (from parent recipe)
+      precomputed_owner="{{_precomputed.repo_owner}}"
+      precomputed_name="{{_precomputed.repo_name}}"
       repo_url="{{repo_url}}"
       
-      # Detect from git remote if not provided
+      if [ -n "$precomputed_owner" ] && [ -n "$precomputed_name" ]; then
+        # Use precomputed values - skip URL parsing
+        echo "{\"repo_url\": \"$repo_url\", \"owner\": \"$precomputed_owner\", \"repo_name\": \"$precomputed_name\", \"detected_from\": \"precomputed\", \"gh_available\": true, \"error\": null}"
+        exit 0
+      fi
+      
+      # Fall back to URL parsing for standalone execution
       if [ -z "$repo_url" ]; then
         repo_url=$(git remote get-url origin 2>/dev/null || echo "")
         detected_from="git_remote"
@@ -72,7 +95,6 @@ steps:
       fi
       
       # Normalize URL and extract owner/repo
-      # Handle: https://github.com/owner/repo.git, git@github.com:owner/repo.git, https://github.com/owner/repo
       normalized=$(echo "$repo_url" | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')
       owner=$(echo "$normalized" | sed 's|https://github.com/||' | cut -d'/' -f1)
       repo_name=$(echo "$normalized" | sed 's|https://github.com/||' | cut -d'/' -f2)
@@ -84,7 +106,6 @@ steps:
         gh_available=false
       fi
       
-      # Validate we got values
       if [ -z "$owner" ] || [ -z "$repo_name" ]; then
         echo "{\"error\": \"Could not parse repo URL: $repo_url\", \"gh_available\": $gh_available}"
       else
@@ -95,11 +116,31 @@ steps:
     on_error: "fail"
 
   # ==========================================================================
-  # Step 2: Parse date range (LLM for natural language)
+  # Step 2: Parse date range (uses precomputed or LLM)
   # ==========================================================================
-  # AGENT STEP - Interpret natural language date expressions
-  # Why agent: "last week", "since Monday", "past few days" need semantic understanding
+  # Optimization: Skip LLM call if parent provides _precomputed.date_since_iso
   - id: "parse-date-range"
+    type: "bash"
+    command: |
+      # Check for precomputed date values from parent recipe
+      precomputed_iso="{{_precomputed.date_since_iso}}"
+      precomputed_date="{{_precomputed.date_since_date}}"
+      precomputed_desc="{{_precomputed.date_description}}"
+      
+      if [ -n "$precomputed_iso" ]; then
+        # Use precomputed values - NO LLM CALL NEEDED
+        echo "{\"original\": \"{{date_range}}\", \"since_iso\": \"$precomputed_iso\", \"since_date\": \"$precomputed_date\", \"description\": \"$precomputed_desc\", \"source\": \"precomputed\"}"
+      else
+        # Signal that we need LLM parsing (standalone mode)
+        echo "{\"needs_llm\": true, \"date_range\": \"{{date_range}}\"}"
+      fi
+    output: "date_check"
+    parse_json: true
+    timeout: 10
+
+  # Step 2b: LLM date parsing (only if precomputed not available)
+  - id: "parse-date-range-llm"
+    condition: "{{date_check.needs_llm}} == true"
     agent: "foundation:zen-architect"
     mode: "ANALYZE"
     prompt: |
@@ -114,18 +155,35 @@ steps:
       - "last week" -> 7 days ago
       - "since 2024-12-01" -> 2024-12-01T00:00:00Z
       - "this month" -> first day of current month
-      - "last 3 days" -> 3 days ago
       
       Return:
       {
         "original": "{{date_range}}",
         "since_iso": "YYYY-MM-DDTHH:MM:SSZ",
         "since_date": "YYYY-MM-DD",
-        "description": "human readable description"
+        "description": "human readable description",
+        "source": "llm_parsed"
       }
-    output: "parsed_date"
+    output: "parsed_date_llm"
     parse_json: true
     timeout: 60
+
+  # Step 2c: Merge date results
+  - id: "merge-date-result"
+    type: "bash"
+    command: |
+      if [ "{{date_check.needs_llm}}" = "true" ]; then
+        cat << 'DATEEOF'
+      {{parsed_date_llm}}
+      DATEEOF
+      else
+        cat << 'DATEEOF'
+      {{date_check}}
+      DATEEOF
+      fi
+    output: "parsed_date"
+    parse_json: true
+    timeout: 10
 
   # ==========================================================================
   # Step 3: Fetch commits (Bash - direct API calls)
