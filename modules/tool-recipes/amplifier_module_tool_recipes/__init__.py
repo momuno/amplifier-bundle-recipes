@@ -174,16 +174,26 @@ Example:
         Returns:
             Resolved Path, or None if @mention couldn't be resolved
         """
+        import sys
         if path_str.startswith("@"):
             # Get mention resolver from coordinator capabilities
             mention_resolver = self.coordinator.get_capability("mention_resolver")
             if mention_resolver is None:
-                logger.warning(f"mention_resolver capability not available for resolving {path_str}")
-                logger.debug(f"Available capabilities: {list(self.coordinator._capabilities.keys()) if hasattr(self.coordinator, '_capabilities') else 'unknown'}")
+                print(f"[DEBUG] mention_resolver capability NOT AVAILABLE for {path_str}", file=sys.stderr)
+                caps = list(self.coordinator._capabilities.keys()) if hasattr(self.coordinator, '_capabilities') else 'unknown'
+                print(f"[DEBUG] Available capabilities: {caps}", file=sys.stderr)
                 return None
+            # Debug: check what type of resolver we have
+            print(f"[DEBUG] mention_resolver type: {type(mention_resolver).__name__}", file=sys.stderr)
+            if hasattr(mention_resolver, 'foundation_resolver'):
+                print(f"[DEBUG] has foundation_resolver: {mention_resolver.foundation_resolver is not None}", file=sys.stderr)
+                if mention_resolver.foundation_resolver and hasattr(mention_resolver.foundation_resolver, 'bundles'):
+                    print(f"[DEBUG] foundation bundles: {list(mention_resolver.foundation_resolver.bundles.keys())}", file=sys.stderr)
             result = mention_resolver.resolve(path_str)
             if result is None:
-                logger.warning(f"mention_resolver returned None for {path_str}")
+                print(f"[DEBUG] mention_resolver returned None for {path_str}", file=sys.stderr)
+            else:
+                print(f"[DEBUG] resolved {path_str} -> {result}", file=sys.stderr)
             return result
         return Path(path_str)
 
