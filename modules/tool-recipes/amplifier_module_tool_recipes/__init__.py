@@ -1,5 +1,6 @@
 """Amplifier tool-recipes module - Execute multi-step AI agent recipes."""
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,159 @@ from .session import SessionManager
 from .validator import validate_recipe
 
 logger = logging.getLogger(__name__)
+
+# Maximum size (in bytes) for output values returned in tool result
+# Prevents oversized tool results that break session resumption
+# ~10KB is roughly 2.5k tokens, leaving room for other content
+MAX_OUTPUT_SIZE_BYTES = 10_000
+
+
+def _truncate_value(value: Any, max_bytes: int = MAX_OUTPUT_SIZE_BYTES) -> Any:
+    """
+    Truncate large values to prevent context overflow.
+
+    Handles strings, dicts, and lists differently:
+    - Strings: Truncate with message
+    - Dicts/Lists: Return truncation marker with preview
+
+    Args:
+        value: Value to potentially truncate
+        max_bytes: Maximum size in bytes
+
+    Returns:
+        Original value if small enough, truncated version otherwise
+    """
+    if isinstance(value, str):
+        if len(value) > max_bytes:
+            return value[:max_bytes] + "\n\n[... truncated, see session for full output]"
+        return value
+
+    if isinstance(value, (dict, list)):
+        try:
+            serialized = json.dumps(value)
+            if len(serialized) > max_bytes:
+                # For structured data, return a truncation marker with preview
+                preview = serialized[:500] + "..." if len(serialized) > 500 else serialized
+                return {
+                    "_truncated": True,
+                    "_type": type(value).__name__,
+                    "_full_size_bytes": len(serialized),
+                    "_preview": preview,
+                    "_message": "See session files for full output",
+                }
+        except (TypeError, ValueError):
+            pass  # Can't serialize, return as-is
+        return value
+
+    return value
+
+
+def _extract_result_summary(
+    context: dict[str, Any],
+    recipe: Recipe | None = None,
+) -> dict[str, Any]:
+    """
+    Extract a compact summary from recipe context for tool result.
+
+    Instead of returning the entire accumulated context (which can be 1MB+
+    for complex workflows), return only essential information.
+
+    Output Priority (following "mechanism not policy" principle):
+    1. Explicit `final_output` key in context (documented contract)
+    2. Last step's output variable (if recipe provided)
+    3. List of available outputs for discovery
+
+    Recipes should use `final_output` as their context key for the primary
+    result they want returned to the caller.
+
+    Args:
+        context: Full recipe execution context
+        recipe: Recipe object (optional, enables last-step fallback)
+
+    Returns:
+        Compact summary suitable for tool result
+    """
+    summary: dict[str, Any] = {}
+
+    # === Metadata (always small, always include) ===
+
+    if "session" in context:
+        summary["session"] = context["session"]
+
+    if "recipe" in context:
+        summary["recipe_metadata"] = context["recipe"]
+
+    # Completion info for staged recipes
+    if "stage" in context:
+        summary["last_stage"] = context["stage"]
+
+    if "step" in context:
+        summary["last_step"] = context["step"]
+
+    if "_skipped_steps" in context:
+        summary["skipped_steps"] = context["_skipped_steps"]
+
+    # === Final Output (explicit contract, no guessing) ===
+
+    # Priority 1: Explicit `final_output` key (documented contract)
+    # Recipes should use this key if they want to return specific output
+    if "final_output" in context:
+        summary["final_output"] = _truncate_value(context["final_output"])
+
+    # Priority 2: Last step's output variable (if recipe provided)
+    # This is often the "real" final output of the workflow
+    elif recipe is not None:
+        last_step_output = _get_last_step_output_key(recipe)
+        if last_step_output and last_step_output in context:
+            summary["final_output"] = _truncate_value(context[last_step_output])
+            summary["final_output_key"] = last_step_output
+
+    # === Discovery: what outputs are available ===
+
+    output_keys = [
+        k for k in context.keys()
+        if not k.startswith("_") and k not in ("session", "recipe", "stage", "step")
+    ]
+    summary["available_outputs"] = output_keys
+
+    # === Reference to full results ===
+
+    if "session" in context:
+        session_id = context["session"].get("id", "unknown")
+        summary["full_results_location"] = (
+            f"Full results saved in recipe session: {session_id}. "
+            "Use 'recipes list' to see session details."
+        )
+
+    return summary
+
+
+def _get_last_step_output_key(recipe: Recipe) -> str | None:
+    """
+    Get the output key from the recipe's last step.
+
+    For flat recipes: last step in steps list
+    For staged recipes: last step of last stage
+
+    Args:
+        recipe: Recipe object
+
+    Returns:
+        Output key name, or None if not found
+    """
+    # Flat recipe
+    if recipe.steps:
+        last_step = recipe.steps[-1]
+        return getattr(last_step, "output", None)
+
+    # Staged recipe
+    if recipe.stages:
+        last_stage = recipe.stages[-1]
+        if last_stage.steps:
+            last_step = last_stage.steps[-1]
+            return getattr(last_step, "output", None)
+
+    return None
 
 
 async def mount(coordinator: ModuleCoordinator, config: dict[str, Any] | None = None):
@@ -224,13 +378,17 @@ Example:
                 recipe, context_vars, project_path, recipe_path=recipe_path
             )
 
+            # Extract compact summary instead of returning full context
+            # Full context is saved in session files and can be massive (1MB+)
+            result_summary = _extract_result_summary(final_context, recipe=recipe)
+
             return ToolResult(
                 success=True,
                 output={
                     "status": "completed",
                     "recipe": recipe.name,
                     "session_id": final_context["session"]["id"],
-                    "context": final_context,
+                    "summary": result_summary,
                 },
             )
         except ApprovalGatePausedError as e:
@@ -297,13 +455,17 @@ Example:
                 recipe, context_vars={}, project_path=project_path, session_id=session_id
             )
 
+            # Extract compact summary instead of returning full context
+            # Full context is saved in session files and can be massive (1MB+)
+            result_summary = _extract_result_summary(final_context, recipe=recipe)
+
             return ToolResult(
                 success=True,
                 output={
                     "status": "completed",
                     "recipe": recipe.name,
                     "session_id": session_id,
-                    "context": final_context,
+                    "summary": result_summary,
                 },
             )
         except ApprovalGatePausedError as e:

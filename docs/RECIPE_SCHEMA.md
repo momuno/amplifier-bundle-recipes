@@ -2129,7 +2129,86 @@ steps:
 
 ---
 
+## Tool Result Output
+
+When a recipe completes, the recipes tool returns a **compact summary** rather than the full accumulated context. This prevents oversized tool results that can break session resumption for complex workflows.
+
+### What Gets Returned
+
+The tool result includes:
+
+```yaml
+status: "completed"
+recipe: "recipe-name"
+session_id: "uuid"
+summary:
+  session: { id, project, started }
+  recipe_metadata: { name, version }
+  final_output: "..." # See priority below
+  final_output_key: "key_name" # If from last step
+  available_outputs: ["key1", "key2", ...] # All context keys
+  full_results_location: "Full results saved in recipe session: ..."
+```
+
+### Final Output Priority
+
+The `final_output` in the summary is determined by this priority:
+
+1. **Explicit `final_output` key** (recommended) - If your recipe sets a context key named `final_output`, that value is returned
+2. **Last step's output** - If no explicit `final_output`, the last step's `output` variable is used
+3. **Available outputs list** - If neither exists, only the list of available keys is returned
+
+### Using `final_output` (Recommended Pattern)
+
+For recipes that need to return specific output to the caller, use `final_output` as your context key:
+
+```yaml
+steps:
+  - id: "analyze"
+    prompt: "Analyze {{file_path}}"
+    output: "analysis"
+
+  - id: "synthesize"
+    prompt: "Create final report from {{analysis}}"
+    output: "final_output"  # <-- This will be returned in tool result
+```
+
+Or copy a specific output to `final_output` in your last step:
+
+```yaml
+  - id: "prepare-output"
+    type: "bash"
+    command: "echo '{{detailed_report}}'"
+    output: "final_output"
+```
+
+### Output Truncation
+
+Large outputs are automatically truncated to prevent context overflow:
+
+- **Strings**: Truncated at ~10KB with `[... truncated, see session for full output]`
+- **Dicts/Lists**: Returns `{_truncated: true, _preview: "...", _full_size_bytes: N}`
+
+### Accessing Full Results
+
+Full results are always saved in the recipe session files. Use `recipes list` to find sessions, or access files directly at:
+
+```
+~/.amplifier/projects/{project}/recipe-sessions/{session-id}/
+├── state.json      # Full context
+├── checkpoint.json # Latest checkpoint
+└── ...
+```
+
+---
+
 ## Schema Change History
+
+### v1.5.0
+- Tool result output optimization (returns summary instead of full context)
+- `final_output` context key convention for explicit output declaration
+- Automatic truncation of large outputs in tool results
+- Last step output fallback when `final_output` not specified
 
 ### v1.4.0
 - Bash steps (`type: "bash"`) for direct shell execution without LLM overhead
