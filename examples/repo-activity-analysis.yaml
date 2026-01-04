@@ -531,48 +531,44 @@ steps:
       
       mkdir -p {{working_dir}}/analyses
       
-      # Write JSON analysis file
+      # Write JSON analysis file using printf (safe for special chars)
       printf '%s\n' '{{repo_summary}}' > {{working_dir}}/analyses/{{repo_info.repo_name}}-analysis.json.tmp
       mv {{working_dir}}/analyses/{{repo_info.repo_name}}-analysis.json.tmp {{working_dir}}/analyses/{{repo_info.repo_name}}-analysis.json
       
-      # Generate and write markdown summary from the JSON
-      # Use jq to extract key information and format as markdown
-      cat > {{working_dir}}/analyses/{{repo_info.repo_name}}-summary.md << 'SUMMARY_EOF'
-# {{repo_info.repo_name}} Repository Analysis
-
-**Repository**: [{{repo_info.owner}}/{{repo_info.repo_name}}]({{repo_info.repo_url}})  
-**Analysis Date**: $(date -u +%Y-%m-%d)  
-**Period**: {{parsed_date.description}}
-
-## Activity Summary
-
-| Metric | Count |
-|--------|-------|
-| Commits | {{commit_analysis.total_analyzed}} |
-| PRs Total | {{prs_data.count}} |
-| PRs Merged | {{prs_data.merged}} |
-
-## Impact Assessment: $(echo '{{repo_summary}}' | jq -r '.impact_assessment.overall // "unknown"' | tr '[:lower:]' '[:upper:]')
-
-$(echo '{{repo_summary}}' | jq -r 'if .impact_assessment.by_level then "| Level | Count |\n|-------|-------|\n" + (.impact_assessment.by_level | to_entries | map("| \(.key | ascii_capitalize) | \(.value) |") | join("\n")) else "" end')
-
-## Key Changes
-
-$(echo '{{repo_summary}}' | jq -r 'if .key_changes and (.key_changes | length) > 0 then .key_changes | to_entries | map("\(.key + 1). **\(.value.description)** (\(.value.impact))") | join("\n\n") else "No significant changes in this period." end')
-
-## Themes
-
-$(echo '{{repo_summary}}' | jq -r 'if .themes and (.themes | length) > 0 then .themes | map("- " + .) | join("\n") else "- No major themes identified" end')
-
-## Risks
-
-$(echo '{{repo_summary}}' | jq -r 'if .risks and (.risks | length) > 0 then .risks | map("- " + .) | join("\n") else "- No significant risks identified" end')
-
-## Notable Items
-
-$(echo '{{repo_summary}}' | jq -r 'if .notable_items and (.notable_items | length) > 0 then .notable_items | map("- " + .) | join("\n") else "- No notable items" end')
-SUMMARY_EOF
-
+      # Generate markdown summary using jq (avoids YAML heredoc issues)
+      jq -r '
+        "# " + .repo + " Repository Analysis\n\n" +
+        "**Repository**: [" + .owner + "/" + .repo + "](" + .url + ")  \n" +
+        "**Analysis Date**: " + .analysis_date + "  \n" +
+        "**Period**: " + .date_range + "\n\n" +
+        "## Activity Summary\n\n" +
+        "| Metric | Count |\n|--------|-------|\n" +
+        "| Commits | " + (.activity_summary.commits | tostring) + " |\n" +
+        "| PRs Total | " + (.activity_summary.prs_total | tostring) + " |\n" +
+        "| PRs Merged | " + (.activity_summary.prs_merged | tostring) + " |\n\n" +
+        "## Impact Assessment: " + (.impact_assessment.overall | ascii_upcase) + "\n\n" +
+        (if .impact_assessment.by_level then
+          "| Level | Count |\n|-------|-------|\n" +
+          (.impact_assessment.by_level | to_entries | map("| " + .key + " | " + (.value|tostring) + " |") | join("\n")) + "\n\n"
+        else "" end) +
+        "## Key Changes\n\n" +
+        (if .key_changes and (.key_changes | length) > 0 then
+          (.key_changes | to_entries | map(((.key + 1) | tostring) + ". " + .value.description + " (" + .value.impact + ")") | join("\n\n")) + "\n\n"
+        else "No significant changes in this period.\n\n" end) +
+        "## Themes\n\n" +
+        (if .themes and (.themes | length) > 0 then
+          (.themes | map("- " + .) | join("\n")) + "\n\n"
+        else "- No major themes identified\n\n" end) +
+        "## Risks\n\n" +
+        (if .risks and (.risks | length) > 0 then
+          (.risks | map("- " + .) | join("\n")) + "\n\n"
+        else "- No significant risks identified\n\n" end) +
+        "## Notable Items\n\n" +
+        (if .notable_items and (.notable_items | length) > 0 then
+          (.notable_items | map("- " + .) | join("\n"))
+        else "- No notable items" end)
+      ' {{working_dir}}/analyses/{{repo_info.repo_name}}-analysis.json         > {{working_dir}}/analyses/{{repo_info.repo_name}}-summary.md
+      
       # Verify files were written
       json_size=$(wc -c < "{{working_dir}}/analyses/{{repo_info.repo_name}}-analysis.json" | tr -d ' ')
       md_size=$(wc -c < "{{working_dir}}/analyses/{{repo_info.repo_name}}-summary.md" | tr -d ' ')
