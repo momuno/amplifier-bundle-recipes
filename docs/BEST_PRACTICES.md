@@ -12,6 +12,7 @@ This document provides best practices for creating, maintaining, and using Ampli
 - [Context Management](#context-management)
 - [Error Handling](#error-handling)
 - [Performance](#performance)
+- [Reliability Patterns](#reliability-patterns)
 - [Testing](#testing)
 - [Maintenance](#maintenance)
 - [Common Pitfalls](#common-pitfalls)
@@ -744,6 +745,58 @@ steps:
   prompt: "Create narrative from findings..."
 ```
 
+#### Conditional LLM Bypass Pattern
+
+**Skip expensive LLM calls when bash can handle simple cases.**
+
+Many workflows have inputs that fall into "simple" vs "complex" categories. Use bash to handle simple cases directly, reserving LLM calls for cases that genuinely need interpretation.
+
+```yaml
+# Step 1: Check if input needs LLM interpretation
+- id: "check-complexity"
+  type: "bash"
+  command: |
+    scope="{{activity_scope}}"
+    scope_lower=$(echo "$scope" | tr '[:upper:]' '[:lower:]')
+    
+    # Simple cases - handle directly without LLM
+    if [ -z "$scope" ] || [ "$scope_lower" = "my activity" ]; then
+      # Current user - no LLM needed
+      jq -n --arg user "$(gh api user --jq '.login')" '{
+        needs_llm: "false",
+        filter_mode: "current_user",
+        usernames: [$user]
+      }'
+    elif [ "$scope_lower" = "all" ] || [ "$scope_lower" = "everyone" ]; then
+      # All activity - no LLM needed
+      echo '{"needs_llm": "false", "filter_mode": "all", "usernames": []}'
+    else
+      # Complex case - flag for LLM interpretation
+      jq -n --arg scope "$scope" '{needs_llm: "true", scope: $scope}'
+    fi
+  output: "complexity_check"
+  parse_json: true
+
+# Step 2: LLM interpretation (only for complex cases)
+- id: "interpret-complex"
+  condition: "{{complexity_check.needs_llm}} == 'true'"
+  agent: "foundation:explorer"
+  prompt: |
+    Interpret: "{{complexity_check.scope}}"
+    Return JSON with filter_mode, usernames, description.
+  output: "interpreted_scope"
+  parse_json: true
+```
+
+**Impact:** In ecosystem-activity-report, this pattern eliminates LLM calls for ~80% of typical inputs ("my activity", "all", single usernames).
+
+**When to apply:**
+- User input has common/predictable patterns
+- Simple cases can be handled with string matching or regex
+- LLM adds 5-15 seconds per call
+
+**Reference:** See `setup-and-check-scope` step in `@amplifier:recipes/ecosystem-activity-report.yaml`
+
 ### Parallel Execution
 
 **Enable parallel for independent iterations:**
@@ -760,6 +813,195 @@ steps:
 - Check API rate limits before enabling
 - Use `parallel: "{{parallel_mode}}"` for user control
 - Default to `true` unless rate-limiting is a concern
+
+### Rate-Limited API Calls
+
+**When calling external APIs in loops, implement rate limiting and retry logic.**
+
+```yaml
+context:
+  # User-configurable rate limiting
+  api_delay_seconds: 0.5      # Delay between API calls
+  api_retry_attempts: 3       # Retries per call
+
+steps:
+  - id: "fetch-data"
+    type: "bash"
+    command: |
+      delay={{api_delay_seconds}}
+      max_retries={{api_retry_attempts}}
+      
+      # Retry wrapper with exponential backoff
+      gh_api_retry() {
+        local endpoint="$1"
+        local jq_filter="$2"
+        local attempt=1
+        local result=""
+        
+        while [ $attempt -le $max_retries ]; do
+          result=$(gh api "$endpoint" --jq "$jq_filter" 2>/dev/null) && break
+          echo "Attempt $attempt failed, retrying..." >&2
+          sleep $((attempt * 2))  # Exponential backoff: 2, 4, 8...
+          attempt=$((attempt + 1))
+        done
+        
+        echo "${result:-0}"
+      }
+      
+      # Process items with rate limiting
+      for item in {{items}}; do
+        count=$(gh_api_retry "repos/$item/commits" 'length')
+        echo "$item: $count commits"
+        sleep "$delay"  # Rate limit between calls
+      done
+```
+
+**Configuration guidance:**
+
+| API | Recommended Delay | Notes |
+|-----|------------------|-------|
+| GitHub (authenticated) | 0.3-0.5s | 5000 requests/hour limit |
+| GitHub (unauthenticated) | 1.0s | 60 requests/hour limit |
+| Rate-limited APIs | 1.0-2.0s | Check provider docs |
+
+**Expose as context variables** so users can adjust based on their rate limits:
+```yaml
+context:
+  api_delay_seconds: 0.5    # Increase if hitting rate limits
+  api_retry_attempts: 3     # Increase for unreliable networks
+```
+
+**Reference:** See `api_delay_seconds` and `api_retry_attempts` in `@amplifier:recipes/ecosystem-activity-report.yaml`
+
+---
+
+## Reliability Patterns
+
+These patterns ensure consistent, predictable recipe behavior.
+
+### Explicit File Write Pattern
+
+**Never rely on LLM to write files. Use bash for guaranteed I/O.**
+
+LLM file writes are non-deterministic—the agent might write, might not, might write to the wrong path. For critical outputs, always use explicit bash steps.
+
+❌ **Unreliable:**
+```yaml
+- id: "synthesize"
+  agent: "foundation:zen-architect"
+  prompt: |
+    Generate report and write to {{output_path}}.
+  # Agent might: write file, forget to write, write partial content, wrong path
+```
+
+✅ **Reliable:**
+```yaml
+# Step 1: Generate content (LLM)
+- id: "synthesize"
+  agent: "foundation:zen-architect"
+  prompt: |
+    Generate the report.
+    DO NOT write to files - return the content only.
+  output: "report_content"
+
+# Step 2: Write to file (bash - guaranteed)
+- id: "write-report"
+  type: "bash"
+  command: |
+    set -euo pipefail
+    mkdir -p "$(dirname "{{output_path}}")"
+    printf '%s\n' '{{report_content}}' > "{{output_path}}"
+    
+    # Verify write succeeded
+    if [ -s "{{output_path}}" ]; then
+      echo "Written: {{output_path}} ($(wc -c < "{{output_path}}") bytes)"
+    else
+      echo "ERROR: Write failed" >&2
+      exit 1
+    fi
+  on_error: "fail"
+```
+
+**Key elements:**
+1. **Explicit instruction** in LLM prompt: "DO NOT write to files"
+2. **Bash step** for actual file I/O
+3. **Verification** that write succeeded
+4. **`on_error: fail`** for critical output steps
+
+#### Atomic Write Pattern
+
+**Write to temp file, then move. Prevents partial/corrupted files.**
+
+```yaml
+- id: "write-output"
+  type: "bash"
+  command: |
+    set -euo pipefail
+    
+    # Write to temp file first
+    printf '%s\n' '{{content}}' > "{{output_path}}.tmp"
+    
+    # Atomic move (either succeeds completely or fails)
+    mv "{{output_path}}.tmp" "{{output_path}}"
+    
+    # Now {{output_path}} is guaranteed complete
+```
+
+**Why this matters:**
+- If write fails mid-stream, temp file is corrupted (not the final file)
+- `mv` on same filesystem is atomic—file either exists completely or not
+- Prevents downstream steps from reading partial content
+- Essential for files that other processes might read concurrently
+
+**Reference:** See `write-report` step in `@amplifier:recipes/ecosystem-activity-report.yaml`
+
+### Cleanup on Completion
+
+**Remove intermediate files while preserving outputs.**
+
+Long-running recipes create temporary files. Clean up at completion to avoid disk bloat and confusion.
+
+```yaml
+context:
+  working_dir: "./ai_working"
+
+steps:
+  # ... processing steps that create files in working_dir ...
+  
+  - id: "complete"
+    type: "bash"
+    command: |
+      # Remove intermediate/temporary directories
+      rm -rf "{{working_dir}}/discovery"
+      rm -rf "{{working_dir}}/temp"
+      rm -rf "{{working_dir}}/cache"
+      
+      # Keep output directories
+      # {{working_dir}}/reports  - final outputs
+      # {{working_dir}}/logs     - audit trail (optional)
+      
+      echo "Cleanup complete. Remaining:"
+      ls -la "{{working_dir}}/"
+    on_error: "continue"  # Don't fail recipe if cleanup fails
+```
+
+**Best practices:**
+- **Use `on_error: continue`** — cleanup failure shouldn't fail the recipe
+- **Be explicit** about what to delete (not `rm -rf {{working_dir}}`)
+- **Keep outputs** in a dedicated subdirectory (e.g., `reports/`)
+- **Log what remains** for user visibility
+
+**Directory structure pattern:**
+```
+{{working_dir}}/
+├── discovery/    # ← DELETE: intermediate data
+├── temp/         # ← DELETE: scratch files
+├── cache/        # ← DELETE: cached API responses
+├── reports/      # ← KEEP: final outputs
+└── logs/         # ← KEEP (optional): execution logs
+```
+
+**Reference:** See `complete` step in `@amplifier:recipes/ecosystem-activity-report.yaml`
 
 ---
 
@@ -1049,6 +1291,13 @@ Before sharing or using a recipe in production, verify:
 - [ ] Retry logic for transient failures
 - [ ] Error strategy matches step criticality
 - [ ] Graceful degradation where appropriate
+
+### Reliability
+- [ ] Critical file writes use explicit bash steps (not LLM)
+- [ ] Atomic writes for important outputs (temp + mv)
+- [ ] API calls include rate limiting if in loops
+- [ ] Cleanup step removes intermediate files
+- [ ] Outputs preserved in dedicated directory
 
 ### Testing
 - [ ] Validated with test data
