@@ -809,10 +809,28 @@ Many workflows have inputs that fall into "simple" vs "complex" categories. Use 
   recipe: "analysis.yaml"
 ```
 
+**Bounded Parallelism (Recommended):**
+
+Use `parallel: N` to limit concurrent executions, preventing API rate limit issues:
+
+```yaml
+- id: "analyze-repos"
+  foreach: "{{repos}}"
+  parallel: 5  # Max 5 concurrent (not unbounded)
+  type: "recipe"
+  recipe: "repo-analysis.yaml"
+```
+
+| Value | Behavior | Use Case |
+|-------|----------|----------|
+| `false` | Sequential | Order-dependent operations |
+| `true` | Unbounded parallel | Small loops, no rate limits |
+| `5` | Max 5 concurrent | Large loops, API rate limits |
+
 **Considerations:**
-- Check API rate limits before enabling
+- Prefer bounded parallelism (`parallel: 5`) over unbounded (`parallel: true`)
 - Use `parallel: "{{parallel_mode}}"` for user control
-- Default to `true` unless rate-limiting is a concern
+- Consider recipe-level rate limiting for global control
 
 ### Rate-Limited API Calls
 
@@ -872,6 +890,71 @@ context:
 ```
 
 **Reference:** See `api_delay_seconds` and `api_retry_attempts` in `@amplifier:recipes/ecosystem-activity-report.yaml`
+
+### Recipe-Level Rate Limiting
+
+**For comprehensive control over LLM call rates across entire recipe trees, use the `rate_limiting` configuration:**
+
+```yaml
+name: "ecosystem-analysis"
+version: "1.0.0"
+description: "Analyze multiple repos with rate limiting"
+
+rate_limiting:
+  max_concurrent_llm: 5      # Max 5 concurrent LLM calls across recipe tree
+  min_delay_ms: 500          # 500ms minimum between call completions
+  backoff:
+    enabled: true            # Auto-slow on 429 errors
+    initial_delay_ms: 1000   # Start with 1s delay after rate limit hit
+    max_delay_ms: 60000      # Cap at 1 minute
+    multiplier: 2.0          # Double delay on each consecutive rate limit
+    reset_after_success: 3   # Reset after 3 successful calls
+
+steps:
+  - id: "analyze-repos"
+    foreach: "{{repos}}"
+    parallel: true           # All 24 repos start concurrently...
+    type: "recipe"           # ...but only 5 LLM calls run at once
+    recipe: "repo-analysis.yaml"
+```
+
+**Key Points:**
+
+| Feature | Description |
+|---------|-------------|
+| `max_concurrent_llm` | Global semaphore across entire recipe tree (including sub-recipes) |
+| `min_delay_ms` | Pacing between LLM call completions (prevents bursts) |
+| `backoff` | Automatic slowdown when 429 errors are detected |
+
+**Inheritance Rules:**
+- Sub-recipes **inherit** parent's rate limiter (cannot override)
+- Parent recipe's limits apply to the entire execution tree
+- This prevents sub-recipes from accidentally overwhelming APIs
+
+**When to Use:**
+
+| Scenario | Configuration |
+|----------|---------------|
+| Multi-user environment | `max_concurrent_llm: 3-5` |
+| API with strict limits | `max_concurrent_llm: 2`, `min_delay_ms: 1000` |
+| Single-user, fast API | `max_concurrent_llm: 10` or omit |
+
+**Combining with Bounded Parallelism:**
+
+```yaml
+# Recipe-level: global LLM concurrency
+rate_limiting:
+  max_concurrent_llm: 5
+
+steps:
+  # Step-level: loop iteration concurrency
+  - id: "outer-loop"
+    foreach: "{{repos}}"
+    parallel: 10             # Up to 10 repos analyzed concurrently...
+    type: "recipe"           # ...but LLM calls capped at 5 globally
+```
+
+This separation allows high concurrency for non-LLM work (bash steps, file I/O) while respecting LLM rate limits.
 
 ---
 

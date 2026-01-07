@@ -27,6 +27,67 @@ class RecursionConfig:
 
 
 @dataclass
+class BackoffConfig:
+    """Backoff configuration for rate limit handling."""
+
+    enabled: bool = True  # Auto-slow on 429 errors
+    initial_delay_ms: int = 1000  # Starting delay after first rate limit
+    max_delay_ms: int = 60000  # Cap at 1 minute
+    multiplier: float = 2.0  # Exponential backoff multiplier
+    reset_after_success: int = 3  # Reset delay after N consecutive successes
+
+    def validate(self) -> list[str]:
+        """Validate backoff configuration."""
+        errors = []
+        if self.initial_delay_ms < 100:
+            errors.append(f"backoff.initial_delay_ms must be >= 100, got {self.initial_delay_ms}")
+        if self.max_delay_ms < self.initial_delay_ms:
+            errors.append(
+                f"backoff.max_delay_ms must be >= initial_delay_ms, "
+                f"got {self.max_delay_ms} < {self.initial_delay_ms}"
+            )
+        if self.multiplier < 1.0:
+            errors.append(f"backoff.multiplier must be >= 1.0, got {self.multiplier}")
+        if self.reset_after_success < 1:
+            errors.append(f"backoff.reset_after_success must be >= 1, got {self.reset_after_success}")
+        return errors
+
+
+@dataclass
+class RateLimitingConfig:
+    """Rate limiting configuration for recipe execution.
+
+    Controls concurrency and pacing of LLM calls across the entire recipe tree.
+    Sub-recipes inherit parent's rate limits (cannot override).
+    """
+
+    max_concurrent_llm: int | None = None  # Max concurrent LLM calls (None = unlimited)
+    min_delay_ms: int = 0  # Minimum delay between LLM call completions
+    backoff: BackoffConfig = field(default_factory=BackoffConfig)
+
+    def validate(self) -> list[str]:
+        """Validate rate limiting configuration."""
+        errors = []
+        if self.max_concurrent_llm is not None:
+            if self.max_concurrent_llm < 1:
+                errors.append(f"rate_limiting.max_concurrent_llm must be >= 1, got {self.max_concurrent_llm}")
+            if self.max_concurrent_llm > 100:
+                errors.append(
+                    f"rate_limiting.max_concurrent_llm unusually high ({self.max_concurrent_llm}), "
+                    "consider a lower value"
+                )
+        if self.min_delay_ms < 0:
+            errors.append(f"rate_limiting.min_delay_ms must be >= 0, got {self.min_delay_ms}")
+        if self.min_delay_ms > 60000:
+            errors.append(
+                f"rate_limiting.min_delay_ms unusually high ({self.min_delay_ms}ms), "
+                "consider a lower value"
+            )
+        errors.extend(self.backoff.validate())
+        return errors
+
+
+@dataclass
 class ApprovalConfig:
     """Approval gate configuration for a stage."""
 
@@ -123,7 +184,7 @@ class Step:
     foreach: str | None = None
     as_var: str | None = None  # Maps to 'as' in YAML (as is Python reserved)
     collect: str | None = None
-    parallel: bool = False  # Run all foreach iterations concurrently
+    parallel: bool | int = False  # False=sequential, True=unbounded, int=max concurrent
     max_iterations: int = 100
     timeout: int = 600
     retry: dict[str, Any] | None = None
@@ -246,6 +307,14 @@ class Step:
         if self.parallel and not self.foreach:
             errors.append(f"Step '{self.id}': parallel requires foreach")
 
+        # Validate parallel as int (bounded parallelism)
+        if isinstance(self.parallel, int) and not isinstance(self.parallel, bool):
+            if self.parallel < 1:
+                errors.append(
+                    f"Step '{self.id}': parallel must be true, false, or a positive integer, "
+                    f"got {self.parallel}"
+                )
+
         return errors
 
 
@@ -271,6 +340,7 @@ class Recipe:
     tags: list[str] = field(default_factory=list)
     context: dict[str, Any] = field(default_factory=dict)
     recursion: RecursionConfig | None = None  # Recipe-level recursion config
+    rate_limiting: RateLimitingConfig | None = None  # Recipe-level rate limiting config
 
     @property
     def is_staged(self) -> bool:
@@ -379,6 +449,15 @@ class Recipe:
         if "recursion" in data and isinstance(data["recursion"], dict):
             recursion_config = RecursionConfig(**data["recursion"])
 
+        # Parse recipe-level rate limiting config if present
+        rate_limiting_config = None
+        if "rate_limiting" in data and isinstance(data["rate_limiting"], dict):
+            rate_data = dict(data["rate_limiting"])
+            # Parse nested backoff config
+            if "backoff" in rate_data and isinstance(rate_data["backoff"], dict):
+                rate_data["backoff"] = BackoffConfig(**rate_data["backoff"])
+            rate_limiting_config = RateLimitingConfig(**rate_data)
+
         # Create recipe
         recipe = cls(
             name=data.get("name", ""),
@@ -392,6 +471,7 @@ class Recipe:
             tags=data.get("tags", []),
             context=data.get("context", {}),
             recursion=recursion_config,
+            rate_limiting=rate_limiting_config,
         )
 
         return recipe
@@ -442,6 +522,10 @@ class Recipe:
         # Validate recipe-level recursion config
         if self.recursion:
             errors.extend(self.recursion.validate())
+
+        # Validate recipe-level rate limiting config
+        if self.rate_limiting:
+            errors.extend(self.rate_limiting.validate())
 
         return errors
 

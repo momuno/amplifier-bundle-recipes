@@ -22,6 +22,7 @@ updated: ISO8601 datetime       # Optional
 tags: list[string]             # Optional
 context: dict                   # Optional - Initial context variables
 recursion: RecursionConfig      # Optional - Recursion protection limits
+rate_limiting: RateLimitingConfig # Optional - Global LLM rate limiting
 steps: list[Step]              # Required - At least one step
 ```
 
@@ -177,6 +178,70 @@ recursion:
 - Limits apply to entire recipe execution tree
 - Exceeding limits raises error immediately
 - Child recipes inherit limits unless overridden at step level
+
+#### `rate_limiting` (optional)
+
+**Type:** RateLimitingConfig object
+**Purpose:** Configure global rate limiting for LLM calls across the entire recipe tree.
+
+**Structure:**
+```yaml
+rate_limiting:
+  max_concurrent_llm: integer   # Max concurrent LLM calls (default: unlimited)
+  min_delay_ms: integer         # Minimum ms between call completions (default: 0)
+  backoff:                      # Auto-slowdown on rate limit errors
+    enabled: boolean            # Enable adaptive backoff (default: true)
+    initial_delay_ms: integer   # Starting delay after first 429 (default: 1000)
+    max_delay_ms: integer       # Maximum delay cap (default: 60000)
+    multiplier: float           # Exponential multiplier (default: 2.0)
+    reset_after_success: integer # Successes before reset (default: 3)
+```
+
+**Fields:**
+- `max_concurrent_llm`: Global semaphore limiting concurrent LLM calls across entire recipe tree. Prevents overwhelming API providers.
+- `min_delay_ms`: Minimum delay between LLM call completions. Provides pacing to avoid bursts.
+- `backoff`: Adaptive backoff configuration for handling 429 errors gracefully.
+
+**Examples:**
+```yaml
+# Conservative rate limiting for shared environments
+rate_limiting:
+  max_concurrent_llm: 3
+  min_delay_ms: 500
+  backoff:
+    enabled: true
+    initial_delay_ms: 2000
+
+# Moderate rate limiting for typical usage
+rate_limiting:
+  max_concurrent_llm: 5
+  min_delay_ms: 200
+
+# Aggressive parallelism (dedicated API access)
+rate_limiting:
+  max_concurrent_llm: 10
+```
+
+**Behavior:**
+- Rate limiter is created at root recipe level
+- Sub-recipes **inherit** parent's rate limiter (cannot override)
+- Applies to all `type: "agent"` steps (not bash or recipe steps themselves)
+- Works in conjunction with step-level `parallel` setting
+
+**Interaction with bounded parallelism:**
+```yaml
+rate_limiting:
+  max_concurrent_llm: 5       # Global: max 5 LLM calls at once
+
+steps:
+  - id: "analyze-repos"
+    foreach: "{{repos}}"
+    parallel: 10              # Step: up to 10 iterations run concurrently
+    type: "recipe"            # But LLM calls within them capped at 5 globally
+    recipe: "repo-analysis.yaml"
+```
+
+This separation allows high concurrency for non-LLM work (bash steps, file I/O) while respecting LLM rate limits.
 
 #### `steps` (required for flat mode)
 
@@ -1438,33 +1503,52 @@ steps:
 
 ### Parallel Iteration
 
-Add `parallel: true` to run all iterations concurrently:
+Use `parallel` to run iterations concurrently:
 
 ```yaml
 - id: "multi-perspective-analysis"
   foreach: "{{perspectives}}"
   as: "perspective"
   collect: "analyses"
-  parallel: true  # Run all iterations simultaneously
+  parallel: true  # Run all iterations simultaneously (unbounded)
   agent: "foundation:zen-architect"
   prompt: "Analyze from {{perspective}} perspective"
 ```
 
-**Behavior with `parallel: true`:**
-- All iterations start at the same time
+**Bounded Parallelism (Recommended for Large Loops):**
+
+Use an integer to limit concurrent iterations:
+
+```yaml
+- id: "analyze-repos"
+  foreach: "{{repos}}"
+  as: "repo"
+  collect: "analyses"
+  parallel: 5  # Max 5 concurrent iterations
+  type: "recipe"
+  recipe: "repo-analysis.yaml"
+```
+
+| Value | Type | Behavior |
+|-------|------|----------|
+| `false` | bool | Sequential (one at a time) |
+| `true` | bool | Unbounded parallel (all at once) |
+| `5` | int | Bounded parallel (max 5 concurrent) |
+
+**Behavior with parallel execution:**
+- All iterations are queued immediately
+- With `true`: all run at once
+- With integer N: max N run concurrently, others wait
 - Results collected in input order (regardless of completion order)
 - If ANY iteration fails, entire step fails (fail-fast)
-- Significantly faster for independent analyses (~Nx speedup for N items)
 
-**When to use parallel:**
-- Independent analyses (security, performance, quality scans)
-- Perspectives that don't depend on each other
-- When order of execution doesn't matter
+**When to use each mode:**
 
-**When NOT to use parallel:**
-- Iterations that depend on previous results
-- Rate-limited APIs (may hit limits)
-- Very large lists (spawns all at once)
+| Mode | Use Case |
+|------|----------|
+| `false` | Order-dependent, incremental operations |
+| `true` | Small loops (<10), no API rate limits |
+| `5` (integer) | Large loops, API rate limits, shared resources |
 
 **Default:** `parallel: false` (sequential iteration, as documented above)
 
@@ -2203,6 +2287,13 @@ Full results are always saved in the recipe session files. Use `recipes list` to
 ---
 
 ## Schema Change History
+
+### v1.6.0
+- Bounded parallelism (`parallel: N` for integer concurrency limits)
+- Recipe-level rate limiting (`rate_limiting` config)
+- Global LLM concurrency control (`max_concurrent_llm`)
+- Pacing between calls (`min_delay_ms`)
+- Adaptive backoff on 429 errors (`backoff` config)
 
 ### v1.5.0
 - Tool result output optimization (returns summary instead of full context)

@@ -12,6 +12,8 @@ from typing import Any
 
 from .expression_evaluator import ExpressionError
 from .expression_evaluator import evaluate_condition
+from .models import BackoffConfig
+from .models import RateLimitingConfig
 from .models import Recipe
 from .models import RecursionConfig
 from .models import Step
@@ -98,6 +100,101 @@ class RecursionState:
         )
 
 
+@dataclass
+class BackoffState:
+    """Tracks current backoff state for rate limiting."""
+
+    config: BackoffConfig
+    current_delay_ms: int = 0
+    consecutive_successes: int = 0
+
+    def increase(self) -> None:
+        """Increase backoff delay after rate limit hit."""
+        if not self.config.enabled:
+            return
+        if self.current_delay_ms == 0:
+            self.current_delay_ms = self.config.initial_delay_ms
+        else:
+            self.current_delay_ms = min(
+                int(self.current_delay_ms * self.config.multiplier),
+                self.config.max_delay_ms,
+            )
+        self.consecutive_successes = 0
+
+    def record_success(self) -> None:
+        """Record successful call, potentially reset backoff."""
+        if not self.config.enabled:
+            return
+        self.consecutive_successes += 1
+        if self.consecutive_successes >= self.config.reset_after_success:
+            self.current_delay_ms = 0
+            self.consecutive_successes = 0
+
+
+class RateLimiter:
+    """Global rate limiter shared across recipe tree.
+
+    Controls concurrency and pacing of LLM calls to prevent overwhelming
+    provider APIs. Sub-recipes inherit the parent's rate limiter.
+    """
+
+    def __init__(self, config: RateLimitingConfig):
+        self.config = config
+        # Semaphore for concurrency control (high value if None/unlimited)
+        max_concurrent = config.max_concurrent_llm or 999999
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.min_delay_ms = config.min_delay_ms
+        self.backoff = BackoffState(config=config.backoff)
+        self._last_completion: float = 0.0
+        self._lock = asyncio.Lock()
+        # Stats for observability
+        self.stats = {
+            "total_acquisitions": 0,
+            "total_wait_time_ms": 0,
+            "rate_limit_hits": 0,
+        }
+
+    async def acquire(self) -> None:
+        """Acquire a slot before making LLM call."""
+        start = asyncio.get_event_loop().time()
+        await self.semaphore.acquire()
+        await self._apply_pacing()
+        await self._apply_backoff()
+        elapsed_ms = (asyncio.get_event_loop().time() - start) * 1000
+        self.stats["total_acquisitions"] += 1
+        self.stats["total_wait_time_ms"] += elapsed_ms
+
+    def release(self) -> None:
+        """Release slot after LLM call completes."""
+        self._last_completion = asyncio.get_event_loop().time()
+        self.semaphore.release()
+
+    def record_rate_limit(self) -> None:
+        """Called when 429 received - increase backoff."""
+        self.stats["rate_limit_hits"] += 1
+        self.backoff.increase()
+
+    def record_success(self) -> None:
+        """Called on success - potentially decrease backoff."""
+        self.backoff.record_success()
+
+    async def _apply_pacing(self) -> None:
+        """Ensure min_delay_ms between completions."""
+        if self.min_delay_ms <= 0:
+            return
+        async with self._lock:
+            now = asyncio.get_event_loop().time()
+            elapsed_ms = (now - self._last_completion) * 1000
+            if elapsed_ms < self.min_delay_ms:
+                await asyncio.sleep((self.min_delay_ms - elapsed_ms) / 1000)
+
+    async def _apply_backoff(self) -> None:
+        """Apply current backoff delay if any."""
+        delay = self.backoff.current_delay_ms
+        if delay > 0:
+            await asyncio.sleep(delay / 1000)
+
+
 class RecipeExecutor:
     """Executes recipe workflows with checkpointing and resumption."""
 
@@ -132,6 +229,7 @@ class RecipeExecutor:
         session_id: str | None = None,
         recipe_path: Path | None = None,
         recursion_state: RecursionState | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> dict[str, Any]:
         """
         Execute recipe with checkpointing and resumption.
@@ -161,6 +259,12 @@ class RecipeExecutor:
         else:
             # Sub-recipe: check depth before entering
             recursion_state.check_depth(recipe.name)
+
+        # Initialize or inherit rate limiter
+        # Rate limiter is created at root recipe and inherited by sub-recipes
+        # Sub-recipes CANNOT override parent's rate limits (parent wins)
+        if rate_limiter is None and recipe.rate_limiting:
+            rate_limiter = RateLimiter(recipe.rate_limiting)
 
         # Create or resume session
         is_resuming = session_id is not None
@@ -197,6 +301,7 @@ class RecipeExecutor:
                 recipe_path=recipe_path,
                 recursion_state=recursion_state,
                 is_resuming=is_resuming,
+                rate_limiter=rate_limiter,
             )
 
         # Flat recipe state loading (uses current_step_index)
@@ -263,7 +368,7 @@ class RecipeExecutor:
                 # Handle foreach loops
                 if step.foreach:
                     try:
-                        await self._execute_loop(step, context, project_path, recursion_state, recipe_path)
+                        await self._execute_loop(step, context, project_path, recursion_state, recipe_path, rate_limiter)
                         # Update completed steps and session state after loop completes
                         completed_steps.append(step.id)
                         state = {
@@ -285,7 +390,7 @@ class RecipeExecutor:
                 try:
                     if step.type == "recipe":
                         result = await self._execute_recipe_step(
-                            step, context, project_path, recursion_state, recipe_path
+                            step, context, project_path, recursion_state, recipe_path, rate_limiter
                         )
                     elif step.type == "bash":
                         # Bash steps don't count against agent recursion limits
@@ -297,7 +402,7 @@ class RecipeExecutor:
                     else:
                         # Agent step - track for recursion limits
                         recursion_state.increment_steps()
-                        result = await self.execute_step_with_retry(step, context)
+                        result = await self.execute_step_with_retry(step, context, rate_limiter)
 
                     # Process result: unwrap spawn() output and optionally parse JSON
                     result = self._process_step_result(result, step)
@@ -350,6 +455,7 @@ class RecipeExecutor:
         recipe_path: Path | None,
         recursion_state: RecursionState,
         is_resuming: bool,
+        rate_limiter: RateLimiter | None = None,
     ) -> dict[str, Any]:
         """
         Execute a staged recipe with approval gates.
@@ -449,7 +555,7 @@ class RecipeExecutor:
                     # Handle foreach loops
                     if step.foreach:
                         try:
-                            await self._execute_loop(step, context, project_path, recursion_state, recipe_path)
+                            await self._execute_loop(step, context, project_path, recursion_state, recipe_path, rate_limiter)
                             completed_steps.append(step.id)
                             self._save_staged_state(
                                 session_id,
@@ -469,7 +575,7 @@ class RecipeExecutor:
                     try:
                         if step.type == "recipe":
                             result = await self._execute_recipe_step(
-                                step, context, project_path, recursion_state, recipe_path
+                                step, context, project_path, recursion_state, recipe_path, rate_limiter
                             )
                         elif step.type == "bash":
                             # Bash steps don't count against agent recursion limits
@@ -481,7 +587,7 @@ class RecipeExecutor:
                         else:
                             # Agent step - track for recursion limits
                             recursion_state.increment_steps()
-                            result = await self.execute_step_with_retry(step, context)
+                            result = await self.execute_step_with_retry(step, context, rate_limiter)
 
                         # Process result: unwrap spawn() output and optionally parse JSON
                         result = self._process_step_result(result, step)
@@ -588,7 +694,7 @@ class RecipeExecutor:
         }
         self.session_manager.save_state(session_id, project_path, state)
 
-    async def execute_step_with_retry(self, step: Step, context: dict[str, Any]) -> Any:
+    async def execute_step_with_retry(self, step: Step, context: dict[str, Any], rate_limiter: RateLimiter | None = None) -> Any:
         """
         Execute step with retry logic.
 
@@ -613,11 +719,29 @@ class RecipeExecutor:
 
         for attempt in range(max_attempts):
             try:
-                result = await self.execute_step(step, context)
-                return result
+                # Acquire rate limiter slot if configured
+                if rate_limiter:
+                    await rate_limiter.acquire()
+
+                try:
+                    result = await self.execute_step(step, context)
+                    # Record success for backoff tracking
+                    if rate_limiter:
+                        rate_limiter.record_success()
+                    return result
+                finally:
+                    # Always release rate limiter slot
+                    if rate_limiter:
+                        rate_limiter.release()
 
             except Exception as e:
                 last_error = e
+
+                # Check if this is a rate limit error (429)
+                error_str = str(e).lower()
+                is_rate_limit = "429" in error_str or "rate limit" in error_str
+                if is_rate_limit and rate_limiter:
+                    rate_limiter.record_rate_limit()
 
                 # If final attempt or not retryable
                 if attempt == max_attempts - 1:
@@ -822,6 +946,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         project_path: Path,
         recursion_state: RecursionState,
         recipe_path: Path | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         """
         Execute a step with foreach iteration.
@@ -871,12 +996,12 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         if step.parallel:
             # Parallel execution: run all iterations concurrently
             results = await self._execute_loop_parallel(
-                step, context, items, loop_var, project_path, recursion_state, recipe_path
+                step, context, items, loop_var, project_path, recursion_state, recipe_path, rate_limiter
             )
         else:
             # Sequential execution: run iterations one at a time
             results = await self._execute_loop_sequential(
-                step, context, items, loop_var, project_path, recursion_state, recipe_path
+                step, context, items, loop_var, project_path, recursion_state, recipe_path, rate_limiter
             )
 
         # Store results
@@ -894,6 +1019,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         project_path: Path,
         recursion_state: RecursionState,
         recipe_path: Path | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> list[Any]:
         """Execute loop iterations sequentially."""
         results = []
@@ -905,7 +1031,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
             try:
                 # Execute based on step type (agent, recipe, or bash)
                 if step.type == "recipe":
-                    result = await self._execute_recipe_step(step, context, project_path, recursion_state, recipe_path)
+                    result = await self._execute_recipe_step(step, context, project_path, recursion_state, recipe_path, rate_limiter)
                 elif step.type == "bash":
                     # Bash steps don't count against agent recursion limits
                     bash_result = await self._execute_bash_step(step, context, project_path)
@@ -916,7 +1042,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
                 else:
                     # Agent step - track for recursion limits
                     recursion_state.increment_steps()
-                    result = await self.execute_step_with_retry(step, context)
+                    result = await self.execute_step_with_retry(step, context, rate_limiter)
                 
                 # Process result: unwrap spawn() output and optionally parse JSON
                 result = self._process_step_result(result, step)
@@ -943,6 +1069,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         project_path: Path,
         recursion_state: RecursionState,
         recipe_path: Path | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> list[Any]:
         """
         Execute loop iterations in parallel using asyncio.gather.
@@ -950,6 +1077,12 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         Each iteration gets its own context copy to avoid conflicts.
         Results are returned in the same order as input items.
         Fail-fast: if any iteration fails, the entire step fails.
+
+        Supports bounded parallelism:
+        - parallel: true -> unbounded (all at once)
+        - parallel: N (int) -> max N concurrent iterations
+
+        Rate limiting is applied via the rate_limiter if configured.
         """
         # For agent steps, pre-check total steps limit (all will run in parallel)
         if step.type == "agent":
@@ -961,6 +1094,19 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
             # Pre-increment for all iterations
             recursion_state.total_steps += len(items)
 
+        # Determine concurrency limit
+        # parallel: true -> None (unbounded)
+        # parallel: N (int) -> N concurrent
+        if step.parallel is True:
+            max_concurrent = None
+        elif isinstance(step.parallel, int):
+            max_concurrent = step.parallel
+        else:
+            max_concurrent = None  # Shouldn't reach here after validation
+
+        # Create semaphore for bounded concurrency (None = unbounded)
+        semaphore = asyncio.Semaphore(max_concurrent) if max_concurrent else None
+
         async def execute_iteration(idx: int, item: Any) -> Any:
             """Execute a single iteration with isolated context."""
             # Copy context and set loop variable for this iteration
@@ -970,7 +1116,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
                 # Execute based on step type (agent, recipe, or bash)
                 if step.type == "recipe":
                     result = await self._execute_recipe_step(
-                        step, iter_context, project_path, recursion_state, recipe_path
+                        step, iter_context, project_path, recursion_state, recipe_path, rate_limiter
                     )
                 elif step.type == "bash":
                     # Bash steps don't count against agent recursion limits
@@ -980,8 +1126,8 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
                         iter_context[step.output_exit_code] = str(bash_result.exit_code)
                     result = bash_result.stdout
                 else:
-                    # Agent step
-                    result = await self.execute_step_with_retry(step, iter_context)
+                    # Agent step - rate limiting handled inside execute_step_with_retry
+                    result = await self.execute_step_with_retry(step, iter_context, rate_limiter)
                 
                 # Process result: unwrap spawn() output and optionally parse JSON
                 return self._process_step_result(result, step)
@@ -990,8 +1136,15 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
             except Exception as e:
                 raise ValueError(f"Step '{step.id}' iteration {idx} failed: {e}") from e
 
-        # Create tasks for all iterations
-        tasks = [execute_iteration(idx, item) for idx, item in enumerate(items)]
+        async def bounded_iteration(idx: int, item: Any) -> Any:
+            """Execute iteration with optional semaphore for bounded concurrency."""
+            if semaphore:
+                async with semaphore:
+                    return await execute_iteration(idx, item)
+            return await execute_iteration(idx, item)
+
+        # Create tasks for all iterations (semaphore controls actual concurrency)
+        tasks = [bounded_iteration(idx, item) for idx, item in enumerate(items)]
 
         # Run all tasks concurrently, fail-fast on any error
         # asyncio.gather preserves order of results
@@ -1006,6 +1159,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         project_path: Path,
         recursion_state: RecursionState,
         parent_recipe_path: Path | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> dict[str, Any]:
         """
         Execute a recipe composition step by loading and running a sub-recipe.
@@ -1062,6 +1216,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
         child_state = recursion_state.enter_recipe(sub_recipe.name, step.recursion)
 
         # Execute sub-recipe recursively
+        # Note: rate_limiter is inherited from parent (sub-recipes cannot override)
         result = await self.execute_recipe(
             recipe=sub_recipe,
             context_vars=sub_context,
@@ -1069,6 +1224,7 @@ DO NOT return the JSON as a string or with escape characters. Return actual JSON
             session_id=None,  # Sub-recipes don't get separate session files
             recipe_path=sub_recipe_path,
             recursion_state=child_state,
+            rate_limiter=rate_limiter,  # Inherit parent's rate limiter
         )
 
         # Propagate total steps back to parent state
