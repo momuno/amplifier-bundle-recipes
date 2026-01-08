@@ -88,6 +88,25 @@ class RateLimitingConfig:
 
 
 @dataclass
+class OrchestratorConfig:
+    """Orchestrator configuration for spawned agent sessions.
+
+    Controls pacing of API calls within each agent's agentic loop.
+    Passed through to spawned sessions.
+    """
+
+    config: dict[str, Any] = field(default_factory=dict)
+
+    def validate(self) -> list[str]:
+        """Validate orchestrator configuration."""
+        errors = []
+        min_delay = self.config.get("min_delay_between_calls_ms", 0)
+        if not isinstance(min_delay, int) or min_delay < 0:
+            errors.append(f"orchestrator.config.min_delay_between_calls_ms must be non-negative int, got {min_delay}")
+        return errors
+
+
+@dataclass
 class ApprovalConfig:
     """Approval gate configuration for a stage."""
 
@@ -341,6 +360,7 @@ class Recipe:
     context: dict[str, Any] = field(default_factory=dict)
     recursion: RecursionConfig | None = None  # Recipe-level recursion config
     rate_limiting: RateLimitingConfig | None = None  # Recipe-level rate limiting config
+    orchestrator: OrchestratorConfig | None = None  # Orchestrator config for spawned sessions
 
     @property
     def is_staged(self) -> bool:
@@ -458,6 +478,11 @@ class Recipe:
                 rate_data["backoff"] = BackoffConfig(**rate_data["backoff"])
             rate_limiting_config = RateLimitingConfig(**rate_data)
 
+        # Parse orchestrator config if present
+        orchestrator_config = None
+        if "orchestrator" in data and isinstance(data["orchestrator"], dict):
+            orchestrator_config = OrchestratorConfig(config=data["orchestrator"].get("config", {}))
+
         # Create recipe
         recipe = cls(
             name=data.get("name", ""),
@@ -472,6 +497,7 @@ class Recipe:
             context=data.get("context", {}),
             recursion=recursion_config,
             rate_limiting=rate_limiting_config,
+            orchestrator=orchestrator_config,
         )
 
         return recipe
@@ -526,6 +552,10 @@ class Recipe:
         # Validate recipe-level rate limiting config
         if self.rate_limiting:
             errors.extend(self.rate_limiting.validate())
+
+        # Validate orchestrator config
+        if self.orchestrator:
+            errors.extend(self.orchestrator.validate())
 
         return errors
 
