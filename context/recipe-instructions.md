@@ -75,6 +75,10 @@ Recipes are declarative YAML workflows that provide:
 | `approvals` | Show pending approval gates |
 | `approve/deny` | Respond to approval gates |
 
+## Recipe Paths
+
+The `recipe_path` parameter supports `@bundle:path` format for referencing recipes within bundles. Prefer this format over absolute paths for portability. See the `recipes` tool description for examples.
+
 ## Quick Gotchas
 
 - **Field access requires parsing**: Use `parse_json: true` on bash/agent steps if you need `{{result.field}}` access

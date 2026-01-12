@@ -40,7 +40,9 @@ def _truncate_value(value: Any, max_bytes: int = MAX_OUTPUT_SIZE_BYTES) -> Any:
     """
     if isinstance(value, str):
         if len(value) > max_bytes:
-            return value[:max_bytes] + "\n\n[... truncated, see session for full output]"
+            return (
+                value[:max_bytes] + "\n\n[... truncated, see session for full output]"
+            )
         return value
 
     if isinstance(value, (dict, list)):
@@ -48,7 +50,9 @@ def _truncate_value(value: Any, max_bytes: int = MAX_OUTPUT_SIZE_BYTES) -> Any:
             serialized = json.dumps(value)
             if len(serialized) > max_bytes:
                 # For structured data, return a truncation marker with preview
-                preview = serialized[:500] + "..." if len(serialized) > 500 else serialized
+                preview = (
+                    serialized[:500] + "..." if len(serialized) > 500 else serialized
+                )
                 return {
                     "_truncated": True,
                     "_type": type(value).__name__,
@@ -126,7 +130,8 @@ def _extract_result_summary(
     # === Discovery: what outputs are available ===
 
     output_keys = [
-        k for k in context.keys()
+        k
+        for k in context.keys()
         if not k.startswith("_") and k not in ("session", "recipe", "stage", "step")
     ]
     summary["available_outputs"] = output_keys
@@ -239,10 +244,10 @@ Operations:
 - deny: Deny a stage to stop execution
 
 Example:
-  Execute recipe: {{"operation": "execute", "recipe_path": "examples/code-review.yaml", "context": {{"file_path": "src/auth.py"}}}}
+  Execute recipe: {{"operation": "execute", "recipe_path": "@recipes:examples/code-review.yaml", "context": {{"file_path": "src/auth.py"}}}}
   Resume session: {{"operation": "resume", "session_id": "recipe_20251118_143022_a3f2"}}
   List sessions: {{"operation": "list"}}
-  Validate recipe: {{"operation": "validate", "recipe_path": "my-recipe.yaml"}}
+  Validate recipe: {{"operation": "validate", "recipe_path": "@recipes:examples/my-recipe.yaml"}}
   List approvals: {{"operation": "approvals"}}
   Approve stage: {{"operation": "approve", "session_id": "...", "stage_name": "planning"}}
   Deny stage: {{"operation": "deny", "session_id": "...", "stage_name": "planning", "reason": "needs revision"}}"""
@@ -254,12 +259,20 @@ Example:
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["execute", "resume", "list", "validate", "approvals", "approve", "deny"],
+                    "enum": [
+                        "execute",
+                        "resume",
+                        "list",
+                        "validate",
+                        "approvals",
+                        "approve",
+                        "deny",
+                    ],
                     "description": "Operation to perform",
                 },
                 "recipe_path": {
                     "type": "string",
-                    "description": "Path to recipe YAML file (required for 'execute' and 'validate' operations)",
+                    "description": "Path to recipe YAML file. Supports @bundle:path format (e.g., @recipes:examples/code-review.yaml) to reference recipes within bundles. Required for 'execute' and 'validate' operations.",
                 },
                 "context": {
                     "type": "object",
@@ -340,14 +353,19 @@ Example:
         """Execute recipe from YAML file."""
         recipe_path_str = input.get("recipe_path")
         if not recipe_path_str:
-            return ToolResult(success=False, error={"message": "recipe_path is required for execute operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "recipe_path is required for execute operation"},
+            )
 
         # Resolve @mention paths (e.g., @recipes:examples/code-review.yaml)
         recipe_path = self._resolve_path(recipe_path_str)
         if recipe_path is None:
             return ToolResult(
                 success=False,
-                error={"message": f"Could not resolve @mention path: {recipe_path_str}"},
+                error={
+                    "message": f"Could not resolve @mention path: {recipe_path_str}"
+                },
             )
         context_vars = input.get("context", {})
 
@@ -358,7 +376,9 @@ Example:
         try:
             recipe = Recipe.from_yaml(recipe_path)
         except Exception as e:
-            return ToolResult(success=False, error={"message": f"Failed to load recipe: {str(e)}"})
+            return ToolResult(
+                success=False, error={"message": f"Failed to load recipe: {str(e)}"}
+            )
 
         # Validate recipe
         validation = validate_recipe(recipe, self.coordinator)
@@ -417,7 +437,10 @@ Example:
         """Resume interrupted recipe session."""
         session_id = input.get("session_id")
         if not session_id:
-            return ToolResult(success=False, error={"message": "session_id is required for resume operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "session_id is required for resume operation"},
+            )
 
         project_path = Path.cwd()
 
@@ -432,7 +455,9 @@ Example:
         try:
             _ = self.session_manager.load_state(session_id, project_path)
         except Exception as e:
-            return ToolResult(success=False, error={"message": f"Failed to load session: {str(e)}"})
+            return ToolResult(
+                success=False, error={"message": f"Failed to load session: {str(e)}"}
+            )
 
         # Load recipe from session
         session_dir = self.session_manager.get_session_dir(session_id, project_path)
@@ -447,12 +472,18 @@ Example:
         try:
             recipe = Recipe.from_yaml(recipe_file)
         except Exception as e:
-            return ToolResult(success=False, error={"message": f"Failed to load recipe from session: {str(e)}"})
+            return ToolResult(
+                success=False,
+                error={"message": f"Failed to load recipe from session: {str(e)}"},
+            )
 
         # Resume execution
         try:
             final_context = await self.executor.execute_recipe(
-                recipe, context_vars={}, project_path=project_path, session_id=session_id
+                recipe,
+                context_vars={},
+                project_path=project_path,
+                session_id=session_id,
             )
 
             # Extract compact summary instead of returning full context
@@ -514,14 +545,19 @@ Example:
         """Validate recipe without executing."""
         recipe_path_str = input.get("recipe_path")
         if not recipe_path_str:
-            return ToolResult(success=False, error={"message": "recipe_path is required for validate operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "recipe_path is required for validate operation"},
+            )
 
         # Resolve @mention paths (e.g., @recipes:examples/code-review.yaml)
         recipe_path = self._resolve_path(recipe_path_str)
         if recipe_path is None:
             return ToolResult(
                 success=False,
-                error={"message": f"Could not resolve @mention path: {recipe_path_str}"},
+                error={
+                    "message": f"Could not resolve @mention path: {recipe_path_str}"
+                },
             )
 
         try:
@@ -561,7 +597,9 @@ Example:
         project_path = Path.cwd()
 
         try:
-            pending_approvals = self.session_manager.list_pending_approvals(project_path)
+            pending_approvals = self.session_manager.list_pending_approvals(
+                project_path
+            )
 
             return ToolResult(
                 success=True,
@@ -582,9 +620,15 @@ Example:
         stage_name = input.get("stage_name")
 
         if not session_id:
-            return ToolResult(success=False, error={"message": "session_id is required for approve operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "session_id is required for approve operation"},
+            )
         if not stage_name:
-            return ToolResult(success=False, error={"message": "stage_name is required for approve operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "stage_name is required for approve operation"},
+            )
 
         project_path = Path.cwd()
 
@@ -643,9 +687,15 @@ Example:
         reason = input.get("reason", "Denied by user")
 
         if not session_id:
-            return ToolResult(success=False, error={"message": "session_id is required for deny operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "session_id is required for deny operation"},
+            )
         if not stage_name:
-            return ToolResult(success=False, error={"message": "stage_name is required for deny operation"})
+            return ToolResult(
+                success=False,
+                error={"message": "stage_name is required for deny operation"},
+            )
 
         project_path = Path.cwd()
 
