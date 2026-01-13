@@ -12,6 +12,7 @@ This document provides best practices for creating, maintaining, and using Ampli
 - [Context Management](#context-management)
 - [Error Handling](#error-handling)
 - [Performance](#performance)
+- [Model Selection](#model-selection)
 - [Reliability Patterns](#reliability-patterns)
 - [Testing](#testing)
 - [Maintenance](#maintenance)
@@ -955,6 +956,148 @@ steps:
 ```
 
 This separation allows high concurrency for non-LLM work (bash steps, file I/O) while respecting LLM rate limits.
+
+---
+
+## Model Selection
+
+Recipe steps can specify which provider and model to use, enabling cost/capability optimization per step.
+
+### The Model Selection Strategy
+
+**Match model capability to task complexity:**
+
+| Task Type | Model Tier | Example Models | Why |
+|-----------|------------|----------------|-----|
+| Simple classification, yes/no | Fast/Cheap | `claude-haiku`, `gpt-4o-mini` | No deep reasoning needed |
+| Quick summaries, formatting | Fast/Cheap | `claude-haiku` | Speed over depth |
+| Code implementation, analysis | Balanced | `claude-sonnet-*`, `gpt-4o` | Good speed/capability tradeoff |
+| Codebase exploration | Balanced | `claude-sonnet-*` | Thorough but routine |
+| Architecture, strategy | Powerful | `claude-opus-*`, `gpt-5*` | Best reasoning, worth the cost |
+| Security analysis | Powerful | `claude-opus-*` | Critical decisions need best model |
+| Complex design decisions | Powerful | `claude-opus-*` | Strategic thinking |
+
+### Using Provider and Model Fields
+
+```yaml
+steps:
+  # Fast/cheap for simple classification
+  - id: "classify-severity"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-haiku"
+    prompt: |
+      Classify the severity as exactly one word: none, low, medium, high, critical
+    output: "severity"
+
+  # Balanced for implementation work
+  - id: "analyze-code"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-sonnet-*"
+    prompt: |
+      Analyze the code structure and identify issues...
+    output: "analysis"
+
+  # Powerful for strategic decisions
+  - id: "design-architecture"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-opus-*"
+    prompt: |
+      Design the optimal architecture considering all tradeoffs...
+    output: "architecture"
+```
+
+### Glob Pattern Matching
+
+Model names support fnmatch-style glob patterns for flexible version matching:
+
+| Pattern | Matches | Use Case |
+|---------|---------|----------|
+| `claude-sonnet-*` | Any claude-sonnet version | Auto-select latest sonnet |
+| `claude-opus-4-*` | Any claude-opus-4 variant | Stay on opus-4 family |
+| `gpt-5*` | gpt-5, gpt-5.1, gpt-5.2, etc. | Latest GPT-5 series |
+| `claude-sonnet-4-5-20250514` | Exact match | Pin to specific version |
+
+**Why glob patterns?** Model versions change frequently. Using `claude-sonnet-*` means your recipe automatically uses the latest sonnet without manual updates.
+
+### Real-World Example: Code Review Recipe
+
+```yaml
+name: "code-review-optimized"
+description: "Code review with model selection for cost/capability optimization"
+
+steps:
+  # Haiku: Simple structure analysis (fast, cheap)
+  - id: "quick-scan"
+    agent: "foundation:explorer"
+    provider: "anthropic"
+    model: "claude-haiku"
+    prompt: "List the functions and classes in {{file_path}}"
+    output: "structure"
+
+  # Sonnet: Thorough code analysis (balanced)
+  - id: "analyze-issues"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-sonnet-*"
+    prompt: "Identify code issues in {{file_path}}: {{structure}}"
+    output: "issues"
+
+  # Haiku: Simple classification (fast, cheap)
+  - id: "classify-severity"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-haiku"
+    prompt: "Respond with one word - severity level: none, low, medium, high, critical"
+    output: "severity"
+
+  # Opus: Strategic recommendations (best reasoning)
+  - id: "design-improvements"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-opus-*"
+    condition: "{{severity}} != 'none'"
+    prompt: "Design concrete improvements for {{file_path}} addressing: {{issues}}"
+    output: "improvements"
+```
+
+### Fallback Behavior
+
+- **Provider not configured**: Falls back to default provider (warning logged)
+- **Model pattern has no matches**: Uses provider's default model
+- **No provider/model specified**: Uses session's configured provider
+
+### Anti-Patterns
+
+❌ **Using expensive models for simple tasks:**
+```yaml
+# Bad: Opus for yes/no question
+- id: "is-python"
+  model: "claude-opus-*"
+  prompt: "Is this file Python? Answer yes or no."
+```
+
+❌ **Using cheap models for critical decisions:**
+```yaml
+# Bad: Haiku for security analysis
+- id: "security-audit"
+  model: "claude-haiku"
+  prompt: "Identify all security vulnerabilities..."
+```
+
+✅ **Match model to task:**
+```yaml
+# Good: Haiku for classification, Opus for security
+- id: "is-python"
+  model: "claude-haiku"
+  prompt: "Is this file Python? Answer yes or no."
+
+- id: "security-audit"
+  model: "claude-opus-*"
+  prompt: "Identify all security vulnerabilities..."
+```
 
 ---
 

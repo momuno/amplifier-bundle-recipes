@@ -74,6 +74,11 @@ The agent has complete knowledge of the recipe schema including:
   - Default (parse_json: false) preserves prose/markdown output
   - Opt-in (parse_json: true) aggressively extracts JSON from text
   - Use parse_json: true when prompting agents for structured data
+- **Provider and model selection: per-step control over which LLM to use**
+  - `provider`: Which configured provider to use (e.g., "anthropic", "openai")
+  - `model`: Model name or glob pattern (e.g., "claude-sonnet-*", "gpt-*")
+  - Glob patterns (fnmatch-style) allow flexible version matching
+  - Fallback to default provider/model if specified one not available
 
 **Reference:** @recipes:docs/RECIPE_SCHEMA.md
 
@@ -119,6 +124,11 @@ The agent understands:
 - Error handling strategies
 - Timeout and retry configuration
 - Testing and validation approaches
+- **Model selection strategy: matching model capabilities to task complexity**
+  - Use fast/cheap models (claude-haiku) for simple classification, formatting, summaries
+  - Use balanced models (claude-sonnet-*) for code implementation, analysis, exploration
+  - Use powerful models (claude-opus-*) for architecture, security, strategic decisions
+  - Use glob patterns to auto-select latest model versions
 
 **Reference:** @recipes:docs/BEST_PRACTICES.md
 

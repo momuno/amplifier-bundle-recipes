@@ -79,11 +79,59 @@ Recipes are declarative YAML workflows that provide:
 
 The `recipe_path` parameter supports `@bundle:path` format for referencing recipes within bundles. Prefer this format over absolute paths for portability. See the `recipes` tool description for examples.
 
+## Provider and Model Selection
+
+Recipe steps can specify which provider and model to use, enabling cost/capability optimization per step.
+
+### Basic Usage
+
+```yaml
+steps:
+  - id: "quick-classification"
+    agent: "foundation:explorer"
+    provider: "anthropic"
+    model: "claude-haiku"           # Fast, cheap for simple tasks
+    prompt: "Classify this as bug/feature/question"
+
+  - id: "deep-analysis"
+    agent: "foundation:zen-architect"
+    provider: "anthropic"
+    model: "claude-opus-4-*"        # Best reasoning for complex work
+    prompt: "Design the architecture for..."
+```
+
+### Glob Pattern Matching
+
+Model names support glob patterns (fnmatch-style) for flexible version matching:
+
+| Pattern | Matches |
+|---------|---------|
+| `claude-sonnet-*` | Latest claude-sonnet version |
+| `claude-opus-4-*` | Any claude-opus-4 variant |
+| `gpt-*` | Any GPT model |
+| `claude-sonnet-4-5-20250514` | Exact model version |
+
+### Model Selection Strategy
+
+| Task Type | Recommended Model | Why |
+|-----------|-------------------|-----|
+| Simple classification, yes/no | `claude-haiku` | Fast, cheap, sufficient |
+| Code implementation, analysis | `claude-sonnet-*` | Good balance of speed/capability |
+| Architecture, strategy, security | `claude-opus-*` | Best reasoning, worth the cost |
+| Quick summaries, formatting | `claude-haiku` | No deep reasoning needed |
+
+### Fallback Behavior
+
+- If specified provider not configured → uses default provider (warning logged)
+- If model pattern has no matches → uses provider's default model
+- If no provider/model specified → uses session's configured provider
+
 ## Quick Gotchas
 
 - **Field access requires parsing**: Use `parse_json: true` on bash/agent steps if you need `{{result.field}}` access
 - **Bash JSON construction**: Use `jq` to build JSON, never shell variable interpolation (breaks on quotes/newlines)
 - **Nested context**: Template variables in nested objects are resolved recursively
+- **Model patterns**: Use glob patterns like `claude-sonnet-*` to auto-select latest versions
 
 ## Getting Help
 
